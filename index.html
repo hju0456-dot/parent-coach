@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#2f6f6a">
+<link rel="manifest" href="manifest.json">
+<title>부모 상담 도우미</title>
+<style>
+:root{--bg:#f6f7f5;--card:#fff;--ink:#1f2a28;--mute:#66736f;--line:#dfe5e2;--pri:#2f6f6a;--pri2:#e3f0ee;--warn:#b4531f;--warn2:#fbeadf;--ok:#2d7a3e;--ok2:#e2f3e6;--bad:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#141a19;--card:#1e2624;--ink:#e8eeec;--mute:#93a29e;--line:#33403d;--pri:#5fb3aa;--pri2:#20332f;--warn:#f0a070;--warn2:#3a2a20;--ok:#7fd08f;--ok2:#1f3324;--bad:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+header{position:sticky;top:0;background:var(--pri);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;z-index:5}
+header h1{font-size:18px;margin:0;flex:1}
+header button{background:rgba(255,255,255,.18);color:#fff;border:0;border-radius:8px;padding:6px 12px;font-size:14px}
+nav{display:flex;gap:6px;padding:10px 16px;overflow-x:auto;background:var(--card);border-bottom:1px solid var(--line)}
+nav button{flex:none;border:1px solid var(--line);background:none;color:var(--ink);border-radius:999px;padding:6px 14px;font-size:14px}
+nav button.on{background:var(--pri);color:#fff;border-color:var(--pri)}
+main{max-width:900px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+.card h2,.card h3{margin:0 0 8px;font-size:17px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.grow{flex:1}
+label{display:block;font-size:14px;color:var(--mute);margin:10px 0 4px}
+input,textarea,select{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+textarea{min-height:90px;resize:vertical}
+button.b{background:var(--pri);color:#fff;border:0;border-radius:8px;padding:10px 16px;font:inherit;cursor:pointer}
+button.b.sec{background:var(--pri2);color:var(--pri)}
+button.b.red{background:var(--bad)}
+button.b:disabled{opacity:.5}
+.mute{color:var(--mute);font-size:14px}
+.tag{display:inline-block;padding:2px 10px;border-radius:999px;background:var(--pri2);color:var(--pri);font-size:13px;margin:2px 4px 2px 0}
+.tag.warn{background:var(--warn2);color:var(--warn)}
+.tag.ok{background:var(--ok2);color:var(--ok)}
+.list-item{padding:12px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;cursor:pointer}
+.list-item:hover{border-color:var(--pri)}
+.bar{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:14px}
+.bar .n{width:130px;flex:none}
+.bar .t{flex:1;background:var(--pri2);border-radius:6px;height:16px;overflow:hidden}
+.bar .t i{display:block;height:100%;background:var(--pri)}
+.bar .v{width:32px;text-align:right;color:var(--mute)}
+.rec{font-size:28px;font-variant-numeric:tabular-nums;text-align:center;margin:8px 0}
+.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--bad);margin-right:8px;animation:bl 1s infinite}
+@keyframes bl{50%{opacity:.2}}
+.qa{border-left:4px solid var(--pri);padding:6px 12px;margin:10px 0;background:var(--bg);border-radius:0 8px 8px 0}
+.qa.bad{border-color:var(--warn)}
+.score{font-size:40px;font-weight:700;color:var(--pri)}
+ul{padding-left:20px;margin:6px 0}
+.loading{padding:20px;text-align:center;color:var(--mute)}
+pre{white-space:pre-wrap;font:inherit;margin:0}
+.notice{background:var(--warn2);color:var(--warn);padding:10px 12px;border-radius:8px;font-size:14px;margin-bottom:12px}
+.chart{width:100%;height:auto;display:block}
+.chart text{fill:var(--mute);font-size:11px}
+.rp{background:#fff;color:#1f2a28;border:1px solid var(--line);border-radius:12px;padding:28px 24px;max-width:720px;margin:0 auto 14px}
+.rp h2{font-size:22px;margin:0 0 4px;color:#2f6f6a}
+.rp h3{font-size:16px;margin:18px 0 6px;color:#2f6f6a;border-bottom:2px solid #e3f0ee;padding-bottom:4px}
+.rp .ft{margin-top:24px;padding-top:10px;border-top:1px solid #dfe5e2;font-size:14px;color:#66736f;text-align:right}
+@media print{header,nav,.noprint{display:none!important}body{background:#fff}main{padding:0;max-width:none}.rp{border:0;padding:0;margin:0;max-width:none}}
+</style>
+</head>
+<body>
+<header><h1 id="title">부모 상담 도우미</h1><button data-act="settings">설정</button></header>
+<nav id="nav"></nav>
+<main id="app"></main>
+
+<script>
+/* ============ 저장소 (IndexedDB, 이 기기 안에만 저장) ============ */
+const DB = (() => {
+  let db;
+  const open = () => new Promise((res, rej) => {
+    if (db) return res(db);
+    const r = indexedDB.open('parent-coach', 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      d.createObjectStore('children', { keyPath: 'id' });
+      d.createObjectStore('sessions', { keyPath: 'id' });
+    };
+    r.onsuccess = () => { db = r.result; res(db); };
+    r.onerror = () => rej(r.error);
+  });
+  const tx = async (store, mode, fn) => {
+    const d = await open();
+    return new Promise((res, rej) => {
+      const t = d.transaction(store, mode);
+      const out = fn(t.objectStore(store));
+      t.oncomplete = () => res(out && out.result !== undefined ? out.result : undefined);
+      t.onerror = () => rej(t.error);
+    });
+  };
+  return {
+    all: (s) => tx(s, 'readonly', (o) => o.getAll()),
+    get: (s, id) => tx(s, 'readonly', (o) => o.get(id)),
+    put: (s, v) => tx(s, 'readwrite', (o) => o.put(v)),
+    del: (s, id) => tx(s, 'readwrite', (o) => o.delete(id)),
+  };
+})();
+
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const nl = (s) => esc(s).replace(/\n/g, '<br>');
+const today = () => new Date().toISOString().slice(0, 10);
+const cfg = {
+  get key() { try { return localStorage.getItem('pc_key') || ''; } catch { return ''; } },
+  set key(v) { try { localStorage.setItem('pc_key', v); } catch {} },
+  get model() { try { return localStorage.getItem('pc_model') || 'claude-sonnet-4-5'; } catch { return 'claude-sonnet-4-5'; } },
+  set model(v) { try { localStorage.setItem('pc_model', v); } catch {} },
+  get center() { try { return localStorage.getItem('pc_center') || ''; } catch { return ''; } },
+  set center(v) { try { localStorage.setItem('pc_center', v); } catch {} },
+  get therapist() { try { return localStorage.getItem('pc_th') || ''; } catch { return ''; } },
+  set therapist(v) { try { localStorage.setItem('pc_th', v); } catch {} },
+  get anon() { try { return localStorage.getItem('pc_anon') !== '0'; } catch { return true; } },
+  set anon(v) { try { localStorage.setItem('pc_anon', v ? '1' : '0'); } catch {} },
+};
+
+/* ============ AI 호출 ============ */
+const SYSTEM = `당신은 아동발달센터 작업치료사의 '부모 상담' 코치입니다. 한국 부모를 대상으로 40분 수업 후 10분 상담을 하는 2년차 작업치료사를 돕습니다.
+목표: 부모가 치료사에게 신뢰를 느끼고 치료를 지속하도록, 전문성과 따뜻함을 갖춘 상담을 하게 돕는 것.
+원칙:
+- 결론(아이의 오늘 변화)을 먼저, 근거(관찰한 구체적 장면)를 다음, 가정에서 할 일 1~2개, 다음 목표 순서로 말하기.
+- 전문용어는 쉬운 말로 풀어 쓰고, 필요하면 용어를 한 번만 덧붙이기.
+- 아이의 강점을 먼저 말하되 과장/허위 약속(완치, 기간 보장)은 하지 않기. 부족한 점은 '다음 목표'로 프레이밍하기.
+- 진단이나 의학적 판단을 단정하지 말고 필요 시 의사/타 전문가 연계를 안내.
+- 답변은 한국어, 실제로 말할 수 있는 구어체 문장으로.`;
+
+async function callAI(userText, maxTokens = 2500) {
+  if (!cfg.key) throw new Error('설정에서 Anthropic API 키를 먼저 입력해 주세요.');
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': cfg.key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({ model: cfg.model, max_tokens: maxTokens, system: SYSTEM, messages: [{ role: 'user', content: userText }] }),
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error?.message || 'AI 호출 실패 (' + r.status + ')');
+  return j.content.map((c) => c.text || '').join('');
+}
+function parseJSON(t) {
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a < 0 || b < 0) throw new Error('AI 응답을 해석하지 못했습니다. 다시 시도해 주세요.');
+  return JSON.parse(t.slice(a, b + 1));
+}
+const anonText = (s, child) => {
+  if (!cfg.anon || !child || !child.name) return s;
+  return String(s).split(child.name).join('아이');
+};
+const childCtx = (c) => `[아이 정보] 나이/학년: ${c.age || '미입력'} / 진단·주호소: ${c.dx || '미입력'} / 치료 목표: ${c.goals || '미입력'} / 부모 성향·특이사항: ${c.parentNote || '미입력'} / 등록 후 수업 횟수: ${c.sessionsCount || '미입력'}`;
+
+/* ============ 질문/답변 유형 ============ */
+const QTYPES = ['효과·성과 확인', '기간·횟수·종결 시기', '가정 지도 방법', '발달 불안·진단 관련', '행동 문제 대처', '학교·또래 적응', '비용·스케줄', '타 치료·타 기관 비교', '불만·불신 표현', '기타'];
+const ATYPES = ['공감형', '근거·관찰 제시형', '구체적 가이드형', '모호·회피형', '전문용어 과다형', '과잉 약속형', '방어·변명형'];
+
+/* ============ 상태/렌더 ============ */
+let S = { view: 'home', childId: null, sessionId: null, tab: 'home', busy: false, msg: '', rec: null };
+const $app = document.getElementById('app');
+const go = (v, extra = {}) => { S = { ...S, view: v, msg: '', ...extra }; render(); window.scrollTo(0, 0); };
+
+function setNav() {
+  const tabs = [['home', '아이 목록'], ['stats', '데이터 분석'], ['coach', '즉석 코치'], ['backup', '백업']];
+  document.getElementById('nav').innerHTML = tabs.map(([k, n]) => `<button class="${S.tab === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}</button>`).join('');
+}
+
+async function render() {
+  setNav();
+  const v = S.view;
+  try {
+    if (v === 'home') return home();
+    if (v === 'child') return child();
+    if (v === 'childForm') return childForm();
+    if (v === 'prep') return prep();
+    if (v === 'record') return record();
+    if (v === 'review') return review();
+    if (v === 'report') return report();
+    if (v === 'stats') return stats();
+    if (v === 'coach') return coach();
+    if (v === 'backup') return backup();
+    if (v === 'settings') return settings();
+  } catch (e) { $app.innerHTML = `<div class="card">오류: ${esc(e.message)}</div>`; }
+}
+
+/* ---------- 홈 ---------- */
+async function home() {
+  document.getElementById('title').textContent = '부모 상담 도우미';
+  const kids = (await DB.all('children')).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const sess = await DB.all('sessions');
+  const cnt = {}; sess.forEach((s) => (cnt[s.childId] = (cnt[s.childId] || 0) + 1));
+  $app.innerHTML = `
+  ${cfg.key ? '' : '<div class="notice">AI 분석을 쓰려면 오른쪽 위 <b>설정</b>에서 API 키를 입력해 주세요. (키 없이도 녹음·기록은 가능)</div>'}
+  <div class="row" style="margin-bottom:12px"><h2 class="grow" style="margin:0">아이 목록 (${kids.length})</h2><button class="b" data-act="newChild">+ 아이 등록</button></div>
+  ${kids.length ? kids.map((k) => `<div class="list-item" data-act="openChild" data-id="${k.id}">
+    <b>${esc(k.name)}</b> <span class="mute">${esc(k.age || '')}</span>
+    <div class="mute">${esc(k.goals || '목표 미입력')}</div>
+    <span class="tag">상담 ${cnt[k.id] || 0}회</span></div>`).join('') : '<div class="card mute">아직 등록된 아이가 없어요. "+ 아이 등록"으로 시작하세요.</div>'}`;
+}
+
+/* ---------- 아이 등록/수정 ---------- */
+async function childForm() {
+  const c = S.childId ? await DB.get('children', S.childId) : {};
+  document.getElementById('title').textContent = c.id ? '아이 정보 수정' : '아이 등록';
+  $app.innerHTML = `<div class="card">
+  <label>아이 이름(또는 별칭)</label><input id="f_name" value="${esc(c.name)}">
+  <label>나이/학년</label><input id="f_age" value="${esc(c.age)}" placeholder="예: 6세, 초1">
+  <label>진단·주호소</label><textarea id="f_dx" placeholder="예: 소근육 발달 지연, 감각 과민, 글씨 쓰기 어려움">${esc(c.dx)}</textarea>
+  <label>치료 목표</label><textarea id="f_goals" placeholder="예: 연필 잡기 안정, 옷 단추 채우기, 촉각 방어 줄이기">${esc(c.goals)}</textarea>
+  <label>부모 성향·특이사항 (걱정, 자주 하는 질문, 기대 등)</label><textarea id="f_pn">${esc(c.parentNote)}</textarea>
+  <div class="row" style="margin-top:14px"><button class="b" data-act="saveChild" data-id="${c.id || ''}">저장</button><button class="b sec" data-act="tab" data-v="home">취소</button>
+  ${c.id ? `<span class="grow"></span><button class="b red" data-act="delChild" data-id="${c.id}">삭제</button>` : ''}</div></div>`;
+}
+
+/* ---------- 아이 상세 ---------- */
+async function child() {
+  const c = await DB.get('children', S.childId);
+  const sess = (await DB.all('sessions')).filter((s) => s.childId === c.id).sort((a, b) => b.date.localeCompare(a.date));
+  document.getElementById('title').textContent = c.name;
+  $app.innerHTML = `
+  <div class="card"><div class="row"><h2 class="grow">${esc(c.name)} <span class="mute">${esc(c.age)}</span></h2><button class="b sec" data-act="editChild" data-id="${c.id}">정보 수정</button></div>
+  <div class="mute">진단·주호소</div><div>${nl(c.dx || '-')}</div>
+  <div class="mute" style="margin-top:8px">치료 목표</div><div>${nl(c.goals || '-')}</div>
+  <div class="mute" style="margin-top:8px">부모 성향·특이사항</div><div>${nl(c.parentNote || '-')}</div>
+  <div style="margin-top:14px"><button class="b" data-act="newSession" data-id="${c.id}">+ 새 상담 시작</button></div></div>
+  ${growthCard(sess)}
+  <h3>상담 기록 (${sess.length})</h3>
+  ${sess.map((s) => `<div class="list-item" data-act="openSession" data-id="${s.id}"><b>${esc(s.date)}</b>
+    ${s.analysis ? `<span class="tag ok">점수 ${esc(s.analysis.score)}</span><span class="tag ${s.analysis.dropout_risk === '높음' ? 'warn' : ''}">이탈 위험 ${esc(s.analysis.dropout_risk || '-')}</span>` : '<span class="tag">분석 전</span>'}
+    ${s.audio ? '<span class="tag">녹음</span>' : ''}
+    <div class="mute">${esc((s.analysis?.summary || s.transcript || s.memo || '').slice(0, 80))}</div></div>`).join('') || '<div class="mute">아직 상담 기록이 없어요.</div>'}`;
+}
+
+/* ---------- 상담 전 준비 ---------- */
+async function prep() {
+  const c = await DB.get('children', S.childId);
+  let s = await DB.get('sessions', S.sessionId);
+  document.getElementById('title').textContent = c.name + ' · 상담 전 준비';
+  $app.innerHTML = `
+  <div class="card"><h3>오늘 수업 내용 메모</h3>
+  <div class="mute">오늘 한 활동, 아이가 잘한 장면, 어려워한 장면을 짧게 적어 주세요. (이름은 AI 전송 시 자동으로 '아이'로 바뀝니다)</div>
+  <textarea id="p_today" placeholder="예: 가위질 직선 5cm 성공, 원 오리기는 손목 힘 부족. 그네 활동은 처음으로 스스로 타려고 시도">${esc(s.today || '')}</textarea>
+  <label>오늘 부모님께 꼭 전하고 싶은 것 / 걱정되는 것</label>
+  <textarea id="p_worry" style="min-height:60px">${esc(s.worry || '')}</textarea>
+  <div class="row" style="margin-top:12px"><button class="b" data-act="genPrep" ${S.busy ? 'disabled' : ''}>상담 준비 만들기 (AI)</button></div></div>
+  ${S.busy ? '<div class="loading">준비 자료를 만드는 중...</div>' : ''}
+  ${S.msg ? `<div class="notice">${esc(S.msg)}</div>` : ''}
+  ${s.prep ? prepView(s.prep) : ''}
+  <div class="row"><button class="b" data-act="toRecord">상담 녹음 시작 →</button><button class="b sec" data-act="openReport">부모님용 리포트</button><button class="b sec" data-act="openChild" data-id="${c.id}">나중에</button></div>`;
+}
+function prepView(p) {
+  const L = (a) => (a && a.length ? '<ul>' + a.map((x) => `<li>${esc(x)}</li>`).join('') + '</ul>' : '-');
+  return `<div class="card"><h3>10분 상담 흐름</h3>
+  <div class="mute">① 오프닝 한 문장</div><div>${esc(p.opening)}</div>
+  <div class="mute" style="margin-top:8px">② 오늘의 변화 (근거 장면 포함)</div>${L(p.progress)}
+  <div class="mute">③ 가정에서 할 일 (1~2개)</div>${L(p.homework)}
+  <div class="mute">④ 다음 목표</div><div>${esc(p.next_goal)}</div>
+  <div class="mute" style="margin-top:8px">⑤ 마무리 한 문장</div><div>${esc(p.closing)}</div></div>
+  <div class="card"><h3>어려운 점을 '포장'해서 말하기</h3>${(p.reframes || []).map((r) => `<div class="qa"><span class="mute">그대로: </span>${esc(r.raw)}<br><b>이렇게: </b>${esc(r.better)}</div>`).join('') || '-'}</div>
+  <div class="card"><h3>예상 질문과 추천 답변</h3>${(p.expected_qa || []).map((r) => `<div class="qa"><b>Q. ${esc(r.q)}</b><br>${esc(r.a)}</div>`).join('')}</div>
+  <div class="card"><h3>쉬운 말로 풀어 쓰기</h3>${(p.jargon || []).map((r) => `<div>• <b>${esc(r.term)}</b> → ${esc(r.easy)}</div>`).join('') || '-'}</div>`;
+}
+
+/* ---------- 녹음 + 받아쓰기 ---------- */
+async function record() {
+  const c = await DB.get('children', S.childId);
+  let s = await DB.get('sessions', S.sessionId);
+  document.getElementById('title').textContent = c.name + ' · 상담 녹음';
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  $app.innerHTML = `
+  <div class="notice">녹음 전 부모님께 <b>“상담 품질 향상을 위해 녹음해도 될까요?”</b>라고 동의를 받아 주세요. 녹음은 이 기기에만 저장돼요.</div>
+  <div class="card">
+    <div class="rec" id="timer">00:00</div>
+    <div class="row" style="justify-content:center">
+      <button class="b" id="btnRec" data-act="recStart">● 녹음 시작</button>
+      <button class="b red" id="btnStop" data-act="recStop" style="display:none">■ 종료</button>
+    </div>
+    <div class="mute" style="text-align:center;margin-top:8px">${SR ? '받아쓰기: 크롬/엣지에서 실시간으로 글자가 나타나요.' : '이 브라우저는 실시간 받아쓰기를 지원하지 않아요. 크롬/엣지를 쓰거나, 종료 후 직접 입력하세요.'}</div>
+  </div>
+  <div class="card"><h3>대화 내용</h3>
+    <div class="mute">화자 구분이 안 되므로 필요하면 줄 앞에 "치료사:" "부모:"를 붙여 주세요. 오인식된 부분은 직접 고칠 수 있어요.</div>
+    <textarea id="r_text" style="min-height:220px">${esc(s.transcript || '')}</textarea>
+    <label>메모 (부모 표정, 분위기, 못 한 말 등)</label><textarea id="r_memo" style="min-height:60px">${esc(s.memo || '')}</textarea>
+    <div class="row" style="margin-top:12px"><button class="b" data-act="saveAnalyze">저장하고 AI 피드백 받기</button><button class="b sec" data-act="saveOnly">저장만</button></div>
+  </div>
+  ${S.busy ? '<div class="loading">상담 내용을 분석하는 중... (30초 정도)</div>' : ''}
+  ${S.msg ? `<div class="notice">${esc(S.msg)}</div>` : ''}`;
+}
+
+const REC = { stream: null, mr: null, chunks: [], sr: null, on: false, t0: 0, timer: null, finalText: '' };
+async function recStart() {
+  const ta = document.getElementById('r_text');
+  try {
+    REC.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) { S.msg = '마이크를 사용할 수 없어요. 브라우저의 마이크 권한을 허용해 주세요.'; return render(); }
+  REC.chunks = [];
+  REC.mr = new MediaRecorder(REC.stream);
+  REC.mr.ondataavailable = (e) => e.data.size && REC.chunks.push(e.data);
+  REC.mr.start(1000);
+  REC.on = true; REC.t0 = Date.now(); REC.finalText = ta.value ? ta.value.trimEnd() + '\n' : '';
+  document.getElementById('btnRec').style.display = 'none';
+  document.getElementById('btnStop').style.display = '';
+  document.getElementById('timer').innerHTML = '<span class="dot"></span><span id="tt">00:00</span>';
+  REC.timer = setInterval(() => {
+    const sec = Math.floor((Date.now() - REC.t0) / 1000);
+    const el = document.getElementById('tt'); if (el) el.textContent = String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
+  }, 500);
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SR) {
+    REC.sr = new SR(); REC.sr.lang = 'ko-KR'; REC.sr.continuous = true; REC.sr.interimResults = true;
+    REC.sr.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) REC.finalText += t.trim() + '\n'; else interim += t;
+      }
+      const el = document.getElementById('r_text'); if (el) el.value = REC.finalText + interim;
+    };
+    REC.sr.onend = () => { if (REC.on) { try { REC.sr.start(); } catch {} } };
+    REC.sr.onerror = () => {};
+    try { REC.sr.start(); } catch {}
+  }
+}
+function recStop() {
+  return new Promise((res) => {
+    REC.on = false; clearInterval(REC.timer);
+    try { REC.sr && REC.sr.stop(); } catch {}
+    if (!REC.mr || REC.mr.state === 'inactive') return res(null);
+    REC.mr.onstop = () => {
+      REC.stream.getTracks().forEach((t) => t.stop());
+      res(new Blob(REC.chunks, { type: REC.mr.mimeType || 'audio/webm' }));
+    };
+    REC.mr.stop();
+  });
+}
+let pendingAudio = null;
+async function recStopUI() {
+  pendingAudio = await recStop();
+  const s = await DB.get('sessions', S.sessionId);
+  s.transcript = document.getElementById('r_text').value;
+  if (pendingAudio) s.audio = pendingAudio;
+  await DB.put('sessions', s);
+  document.getElementById('btnStop').style.display = 'none';
+  document.getElementById('btnRec').style.display = '';
+  document.getElementById('btnRec').textContent = '● 이어서 녹음';
+  document.getElementById('timer').textContent = '녹음 저장됨';
+}
+async function persistSession(analyze) {
+  if (REC.on) await recStopUI();
+  const s = await DB.get('sessions', S.sessionId);
+  s.transcript = document.getElementById('r_text').value;
+  s.memo = document.getElementById('r_memo').value;
+  await DB.put('sessions', s);
+  if (!analyze) return go('review');
+  if (!s.transcript.trim()) { S.msg = '분석할 대화 내용이 없어요. 내용을 입력하거나 녹음해 주세요.'; return render(); }
+  S.busy = true; S.msg = ''; render();
+  try { await analyzeSession(); } catch (e) { S.msg = e.message; }
+  S.busy = false; go('review', { msg: S.msg });
+}
+
+/* ---------- AI: 상담 준비 / 상담 분석 ---------- */
+async function genPrep() {
+  const c = await DB.get('children', S.childId);
+  const s = await DB.get('sessions', S.sessionId);
+  s.today = document.getElementById('p_today').value; s.worry = document.getElementById('p_worry').value;
+  await DB.put('sessions', s);
+  if (!s.today.trim()) { S.msg = '오늘 수업 내용을 간단히 적어 주세요.'; return render(); }
+  S.busy = true; S.msg = ''; render();
+  const prompt = anonText(`${childCtx(c)}
+[오늘 수업 메모] ${s.today}
+[전하고 싶은/걱정되는 점] ${s.worry || '없음'}
+
+아래 JSON으로만 답하세요(다른 글자 금지). 모든 문장은 부모에게 실제로 말하는 구어체 한국어.
+{"opening":"오프닝 한 문장","progress":["오늘의 변화 1(구체 장면 포함)","..."],"homework":["가정에서 할 일 1","(최대 2개)"],"next_goal":"다음 목표 한두 문장","closing":"마무리 한 문장",
+"reframes":[{"raw":"부족한 점을 그대로 말하면","better":"신뢰를 주는 방식으로 바꾼 말"}],
+"expected_qa":[{"q":"이 부모가 물을 만한 질문","a":"추천 답변(3~4문장)"}],
+"jargon":[{"term":"오늘 쓸 전문용어","easy":"부모에게 쉽게 풀어 쓴 말"}]}
+expected_qa는 4개, reframes는 1~3개.`, c);
+  try { s.prep = parseJSON(await callAI(prompt, 3000)); await DB.put('sessions', s); }
+  catch (e) { S.msg = e.message; }
+  S.busy = false; render();
+}
+
+async function analyzeSession() {
+  const s = await DB.get('sessions', S.sessionId);
+  const c = await DB.get('children', s.childId);
+  const prompt = anonText(`${childCtx(c)}
+[오늘 수업 메모] ${s.today || '없음'}
+[상담 대화(자동 받아쓰기라 오인식/화자 혼선 가능)]
+${s.transcript}
+[치료사 메모] ${s.memo || '없음'}
+
+치료사(2년차)의 부모 상담을 코칭해 주세요. 아래 JSON으로만 답하세요(다른 글자 금지).
+질문 유형 후보: ${QTYPES.join(', ')}
+답변 유형 후보: ${ATYPES.join(', ')}
+{"score":0~100 정수(신뢰 형성 관점),
+"summary":"상담 한 줄 요약",
+"scores":{"empathy":0~5,"evidence":0~5,"clarity":0~5,"guidance":0~5,"confidence":0~5},
+"parent_state":"부모의 감정·우려·기대 추정(근거 문장 포함)",
+"dropout_risk":"낮음|보통|높음","dropout_reason":"판단 근거",
+"strengths":["잘한 점(대화 속 실제 표현 인용)"],
+"improvements":["개선점(무엇을 어떻게)"],
+"qa":[{"q":"부모의 질문/우려 원문 요약","qtype":"질문 유형","a":"치료사가 실제 한 답변 요약","atype":"답변 유형","rating":1~5,"better":"더 신뢰를 주는 답변 예시(구어체 3~4문장)","why":"왜 더 나은지 한 줄"}],
+"missed":["놓친 기회(부모 신호에 반응 못한 순간 등)"],
+"followup_message":"오늘 저녁에 학부모께 보낼 짧은 카카오톡 메시지 초안",
+"next_time":["다음 상담에서 바로 해볼 것 2~3개"]}`, c);
+  s.analysis = parseJSON(await callAI(prompt, 4000));
+  s.analysis.at = Date.now();
+  await DB.put('sessions', s);
+}
+
+/* ---------- 결과 화면 ---------- */
+async function review() {
+  const s = await DB.get('sessions', S.sessionId);
+  const c = await DB.get('children', s.childId);
+  document.getElementById('title').textContent = c.name + ' · ' + s.date;
+  const a = s.analysis;
+  const bl = (arr) => (arr && arr.length ? '<ul>' + arr.map((x) => `<li>${esc(x)}</li>`).join('') + '</ul>' : '-');
+  const sc = a?.scores || {};
+  const lab = { empathy: '공감', evidence: '근거 제시', clarity: '쉬운 설명', guidance: '가정 지도', confidence: '자신감·전문성' };
+  $app.innerHTML = `
+  ${S.msg ? `<div class="notice">${esc(S.msg)}</div>` : ''}
+  <div class="card"><div class="row"><div class="grow"><div class="mute">${esc(s.date)} 상담</div>
+  ${s.audio ? '<audio id="aud" controls style="width:100%;margin-top:6px"></audio>' : ''}</div>
+  <button class="b sec" data-act="openReport">부모님용 리포트</button>
+  <button class="b sec" data-act="reprep" data-id="${s.id}">준비 보기</button>
+  <button class="b sec" data-act="reRecord">대화 수정</button></div></div>
+  ${!a ? `<div class="card"><div class="mute">아직 AI 분석이 없어요.</div><button class="b" data-act="analyzeNow" ${S.busy ? 'disabled' : ''}>AI 피드백 받기</button>${S.busy ? '<div class="loading">분석 중...</div>' : ''}</div>
+  <div class="card"><h3>대화 내용</h3><pre>${esc(s.transcript || '-')}</pre></div>` : `
+  <div class="card"><div class="row"><div><div class="mute">신뢰 형성 점수</div><div class="score">${esc(a.score)}</div></div>
+  <div class="grow"><b>${esc(a.summary)}</b><div style="margin-top:6px"><span class="tag ${a.dropout_risk === '높음' ? 'warn' : a.dropout_risk === '낮음' ? 'ok' : ''}">이탈 위험 ${esc(a.dropout_risk)}</span></div>
+  <div class="mute">${esc(a.dropout_reason)}</div></div></div>
+  <div style="margin-top:10px">${Object.keys(lab).map((k) => `<div class="bar"><div class="n">${lab[k]}</div><div class="t"><i style="width:${(Number(sc[k]) || 0) * 20}%"></i></div><div class="v">${esc(sc[k] ?? '-')}</div></div>`).join('')}</div></div>
+  <div class="card"><h3>부모님 상태</h3>${nl(a.parent_state)}</div>
+  <div class="card"><h3>잘한 점</h3>${bl(a.strengths)}<h3 style="margin-top:12px">개선할 점</h3>${bl(a.improvements)}</div>
+  <div class="card"><h3>질문별 코칭</h3>${(a.qa || []).map((x) => `<div class="qa ${Number(x.rating) <= 3 ? 'bad' : ''}">
+    <span class="tag">${esc(x.qtype)}</span><span class="tag ${Number(x.rating) <= 3 ? 'warn' : 'ok'}">${esc(x.atype)} · ${esc(x.rating)}/5</span>
+    <div><b>Q.</b> ${esc(x.q)}</div><div><b>내 답변:</b> ${esc(x.a)}</div>
+    <div style="margin-top:6px"><b>추천:</b> ${esc(x.better)}</div><div class="mute">${esc(x.why)}</div></div>`).join('') || '-'}</div>
+  <div class="card"><h3>놓친 기회</h3>${bl(a.missed)}<h3 style="margin-top:12px">다음 상담에서 해볼 것</h3>${bl(a.next_time)}</div>
+  <div class="card"><h3>보낼 메시지 초안</h3><pre id="fm">${esc(a.followup_message)}</pre>
+  <div style="margin-top:8px"><button class="b sec" data-act="copyFm">복사</button> <button class="b sec" data-act="analyzeNow">다시 분석</button></div></div>
+  <div class="card"><h3>대화 내용</h3><pre>${esc(s.transcript || '-')}</pre></div>`}
+  <div class="row"><button class="b sec" data-act="openChild" data-id="${c.id}">아이 페이지로</button><span class="grow"></span><button class="b red" data-act="delSession" data-id="${s.id}">이 기록 삭제</button></div>`;
+  if (s.audio) { const au = document.getElementById('aud'); if (au) au.src = URL.createObjectURL(s.audio); }
+}
+
+/* ---------- 아이별 성장 그래프 ---------- */
+function lineChart(pts, max, unit) {
+  const W = 600, H = 170, L = 34, R = 12, T = 12, B = 30;
+  const x = (i) => L + (pts.length === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (pts.length - 1));
+  const y = (v) => T + (H - T - B) * (1 - v / max);
+  const grid = [0, 0.5, 1].map((g) => `<line x1="${L}" x2="${W - R}" y1="${y(max * g)}" y2="${y(max * g)}" stroke="var(--line)"/><text x="${L - 6}" y="${y(max * g) + 4}" text-anchor="end">${Math.round(max * g)}</text>`).join('');
+  const path = pts.map((p, i) => (i ? 'L' : 'M') + x(i) + ' ' + y(p.v)).join(' ');
+  const dots = pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.v)}" r="4" fill="var(--pri)"/><text x="${x(i)}" y="${y(p.v) - 8}" text-anchor="middle" style="fill:var(--ink)">${p.v}${unit || ''}</text><text x="${x(i)}" y="${H - 10}" text-anchor="middle">${esc(p.l)}</text>`).join('');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="추이 그래프">${grid}<path d="${path}" fill="none" stroke="var(--pri)" stroke-width="2.5"/>${dots}</svg>`;
+}
+function growthCard(sess) {
+  const a = sess.filter((s) => s.analysis).sort((p, q) => p.date.localeCompare(q.date));
+  if (a.length < 2) return `<div class="card"><h3>상담 성장 그래프</h3><div class="mute">AI 분석이 2회 이상 쌓이면 이 아이 상담의 점수 변화가 그래프로 나타나요.</div></div>`;
+  const last = a.slice(-8);
+  const lab = { empathy: '공감', evidence: '근거 제시', clarity: '쉬운 설명', guidance: '가정 지도', confidence: '자신감·전문성' };
+  const first = a[0].analysis.scores || {}, cur = a[a.length - 1].analysis.scores || {};
+  const rows = Object.keys(lab).map((k) => { const d = (Number(cur[k]) || 0) - (Number(first[k]) || 0); return `<div class="bar"><div class="n">${lab[k]}</div><div class="t"><i style="width:${(Number(cur[k]) || 0) * 20}%"></i></div><div class="v">${cur[k] ?? '-'}</div><div class="v" style="width:44px;color:${d > 0 ? 'var(--ok)' : d < 0 ? 'var(--warn)' : 'var(--mute)'}">${d > 0 ? '▲' + d : d < 0 ? '▼' + Math.abs(d) : '–'}</div></div>`; }).join('');
+  return `<div class="card"><h3>상담 성장 그래프 <span class="mute">(최근 ${last.length}회 신뢰 점수)</span></h3>${lineChart(last.map((s) => ({ l: s.date.slice(5), v: Number(s.analysis.score) || 0 })), 100)}
+  <h3 style="margin-top:12px">항목별 최근 점수 <span class="mute">(첫 상담 대비 변화)</span></h3>${rows}</div>`;
+}
+
+/* {이름} 치환 + 받침에 맞는 조사 보정 */
+function fillName(t, name) {
+  const last = name.charCodeAt(name.length - 1), hasB = last >= 0xac00 && last <= 0xd7a3 && (last - 0xac00) % 28 !== 0;
+  const map = { '이': ['이', '가'], '가': ['이', '가'], '은': ['은', '는'], '는': ['은', '는'], '을': ['을', '를'], '를': ['을', '를'], '과': ['과', '와'], '와': ['과', '와'] };
+  return t.replace(/\{이름\}([이가은는을를과와])?/g, (m, j) => name + (j ? map[j][hasB ? 0 : 1] : ''));
+}
+/* ---------- 부모님용 요약 리포트 ---------- */
+async function report() {
+  const s = await DB.get('sessions', S.sessionId);
+  const c = await DB.get('children', s.childId);
+  document.getElementById('title').textContent = c.name + ' · 부모님용 리포트';
+  const r = s.report;
+  const L = (a) => '<ul>' + (a || []).map((x) => `<li>${esc(fillName(String(x), c.name))}</li>`).join('') + '</ul>';
+  const T = (x) => esc(fillName(String(x ?? ''), c.name));
+  $app.innerHTML = `
+  <div class="card noprint"><h3>부모님께 드리는 요약 리포트</h3>
+  <div class="mute">오늘 수업 메모와 상담 준비 내용으로 만들어요. 문구를 확인한 뒤 인쇄하거나 PDF로 저장해서 보내세요. 진단·치료 기간 등 단정적인 표현이 없는지 꼭 읽어보세요.</div>
+  <div class="row"><div class="grow"><label>센터명</label><input id="rp_center" value="${esc(cfg.center)}"></div><div class="grow"><label>치료사 이름</label><input id="rp_th" value="${esc(cfg.therapist)}"></div></div>
+  <div class="row" style="margin-top:12px"><button class="b" data-act="genReport" ${S.busy ? 'disabled' : ''}>${r ? '리포트 다시 만들기' : '리포트 만들기 (AI)'}</button>
+  ${r ? '<button class="b sec" data-act="printReport">인쇄 / PDF 저장</button><button class="b sec" data-act="copyReport">글로 복사(카톡용)</button>' : ''}
+  <button class="b sec" data-act="backReview">돌아가기</button></div>
+  ${S.busy ? '<div class="loading">리포트를 만드는 중...</div>' : ''}${S.msg ? `<div class="notice" style="margin-top:12px">${esc(S.msg)}</div>` : ''}</div>
+  ${r ? `<div class="rp" id="rp"><h2>${T(c.name)} 치료 상담 리포트</h2><div style="color:#66736f;font-size:14px">${esc(s.date)}${cfg.center ? ' · ' + esc(cfg.center) : ''}</div>
+  <p style="margin-top:14px">${T(r.greeting)}</p>
+  <h3>오늘의 모습과 변화</h3>${L(r.highlights)}
+  <h3>집에서 이렇게 해보세요</h3>${L(r.home_tips)}
+  <h3>다음 목표</h3><p>${T(r.next_goal)}</p>
+  <p>${T(r.closing)}</p>
+  <div class="ft">${cfg.therapist ? '작업치료사 ' + esc(cfg.therapist) : ''}</div></div>` : ''}`;
+}
+async function genReport() {
+  const s = await DB.get('sessions', S.sessionId);
+  const c = await DB.get('children', s.childId);
+  cfg.center = document.getElementById('rp_center').value.trim(); cfg.therapist = document.getElementById('rp_th').value.trim();
+  const p = s.prep || {};
+  if (!s.today && !p.progress) { S.msg = '상담 준비 화면에서 오늘 수업 내용을 먼저 적어 주세요.'; return render(); }
+  S.busy = true; S.msg = ''; render();
+  const prompt = anonText(`${childCtx(c)}
+[오늘 수업 메모] ${s.today || '없음'}
+[준비된 변화/과제/목표] ${JSON.stringify({ progress: p.progress, homework: p.homework, next_goal: p.next_goal })}
+
+부모님께 드릴 1장짜리 요약 리포트를 만드세요. 아래 JSON으로만 답하세요(다른 글자 금지).
+- 아이를 가리킬 때는 반드시 {이름} 이라고 쓰세요(이름은 시스템이 채웁니다).
+- 어려운 전문용어는 쉬운 말로. 관찰한 구체적 장면 중심. 완치·기간 보장·진단 단정 금지. 부족한 점은 '다음 목표'로 부드럽게.
+- 따뜻하고 정중한 존댓말.
+{"greeting":"인사와 오늘 한 줄 요약(2문장)","highlights":["오늘의 모습/변화 2~3개"],"home_tips":["집에서 할 일 1~2개(구체적으로 언제 어떻게)"],"next_goal":"다음 목표 1~2문장","closing":"격려와 마무리 1~2문장"}`, c);
+  try { s.report = parseJSON(await callAI(prompt, 1800)); await DB.put('sessions', s); } catch (e) { S.msg = e.message; }
+  S.busy = false; render();
+}
+
+/* ---------- 데이터 분석 ---------- */
+async function stats() {
+  document.getElementById('title').textContent = '데이터 분석';
+  const sess = (await DB.all('sessions')).filter((s) => s.analysis).sort((a, b) => a.date.localeCompare(b.date));
+  const kids = Object.fromEntries((await DB.all('children')).map((k) => [k.id, k]));
+  if (!sess.length) { $app.innerHTML = '<div class="card mute">분석된 상담이 아직 없어요. 상담을 기록하고 AI 피드백을 받으면 여기에 통계가 쌓여요.</div>'; return; }
+  const qs = sess.flatMap((s) => (s.analysis.qa || []).map((q) => ({ ...q, date: s.date, childId: s.childId })));
+  const cntBy = (arr, k) => { const m = {}; arr.forEach((x) => { const v = x[k] || '기타'; m[v] = (m[v] || 0) + 1; }); return Object.entries(m).sort((a, b) => b[1] - a[1]); };
+  const bars = (rows, max) => rows.map(([n, v]) => `<div class="bar"><div class="n">${esc(n)}</div><div class="t"><i style="width:${(v / max) * 100}%"></i></div><div class="v">${v}</div></div>`).join('');
+  const qt = cntBy(qs, 'qtype'), at = cntBy(qs, 'atype');
+  const avg = (a) => (a.length ? (a.reduce((x, y) => x + (Number(y) || 0), 0) / a.length).toFixed(1) : '-');
+  // 질문유형별 평균 답변 점수
+  const byQ = {}; qs.forEach((q) => { (byQ[q.qtype] = byQ[q.qtype] || []).push(q.rating); });
+  const weak = Object.entries(byQ).map(([k, v]) => [k, +avg(v), v.length]).filter((x) => x[2] >= 1).sort((a, b) => a[1] - b[1]);
+  // 월별 점수
+  const mm = {}; sess.forEach((s) => { const m = s.date.slice(0, 7); (mm[m] = mm[m] || []).push(s.analysis.score); });
+  const risky = sess.filter((s) => s.analysis.dropout_risk === '높음').slice(-5).reverse();
+  // 대표 질문(낮은 평점)
+  const hard = qs.filter((q) => Number(q.rating) <= 3).slice(-6).reverse();
+  $app.innerHTML = `
+  <div class="card"><div class="row"><div><div class="mute">분석된 상담</div><div class="score">${sess.length}</div></div><div><div class="mute">평균 점수</div><div class="score">${avg(sess.map((s) => s.analysis.score))}</div></div><div><div class="mute">질문 수</div><div class="score">${qs.length}</div></div></div></div>
+  <div class="card"><h3>월별 평균 점수</h3>${bars(Object.entries(mm).map(([m, v]) => [m, Math.round(avg(v))]), 100)}</div>
+  <div class="card"><h3>부모가 자주 하는 질문 유형</h3>${bars(qt, qt[0]?.[1] || 1)}</div>
+  <div class="card"><h3>내 답변 유형</h3>${bars(at, at[0]?.[1] || 1)}<div class="mute">‘모호·회피형’, ‘전문용어 과다형’, ‘과잉 약속형’이 많다면 개선 신호예요.</div></div>
+  <div class="card"><h3>질문 유형별 내 답변 평점 (낮은 순)</h3>${weak.map(([k, v, n]) => `<div class="bar"><div class="n">${esc(k)}</div><div class="t"><i style="width:${v * 20}%"></i></div><div class="v">${v}</div></div>`).join('')}</div>
+  <div class="card"><h3>다시 연습하면 좋은 질문</h3>${hard.map((q) => `<div class="qa bad"><span class="tag">${esc(q.qtype)}</span><div><b>Q.</b> ${esc(q.q)}</div><div><b>추천:</b> ${esc(q.better)}</div></div>`).join('') || '<div class="mute">낮은 평점의 질문이 없어요.</div>'}</div>
+  <div class="card"><h3>이탈 위험 '높음' 최근 상담</h3>${risky.map((s) => `<div class="list-item" data-act="openSession" data-id="${s.id}"><b>${esc(kids[s.childId]?.name || '?')}</b> ${esc(s.date)}<div class="mute">${esc(s.analysis.dropout_reason)}</div></div>`).join('') || '<div class="mute">없음</div>'}</div>`;
+}
+
+/* ---------- 즉석 코치 ---------- */
+async function coach() {
+  document.getElementById('title').textContent = '즉석 코치';
+  $app.innerHTML = `<div class="card"><h3>부모님 질문에 어떻게 답하지?</h3>
+  <div class="mute">상담 직전/직후에 부모님이 하신 질문을 적으면 바로 답변 예시를 줘요. (내 초안을 같이 적으면 첨삭도 해줘요)</div>
+  <label>부모님 질문</label><textarea id="c_q" style="min-height:70px" placeholder="예: 우리 애는 몇 달째 하는데 뭐가 좋아진 건지 모르겠어요."></textarea>
+  <label>(선택) 내가 하려던 답변</label><textarea id="c_a" style="min-height:70px"></textarea>
+  <div class="row" style="margin-top:10px"><button class="b" data-act="coachGo" ${S.busy ? 'disabled' : ''}>답변 코칭 받기</button></div></div>
+  ${S.busy ? '<div class="loading">생각 중...</div>' : ''}${S.msg ? `<div class="notice">${esc(S.msg)}</div>` : ''}
+  ${S.coachOut ? `<div class="card"><pre>${esc(S.coachOut)}</pre></div>` : ''}`;
+}
+
+/* ---------- 백업 ---------- */
+async function backup() {
+  document.getElementById('title').textContent = '백업';
+  $app.innerHTML = `<div class="card"><h3>데이터 백업/복원</h3>
+  <div class="mute">기록은 이 기기에만 저장돼요. 기기를 바꾸거나 브라우저 데이터를 지우기 전에 백업하세요. (녹음 파일은 용량 때문에 백업에 포함되지 않아요)</div>
+  <div class="row" style="margin-top:12px"><button class="b" data-act="export">백업 파일 저장</button>
+  <label class="b sec" style="margin:0;cursor:pointer">복원하기<input id="imp" type="file" accept=".json" style="display:none"></label></div>${S.msg ? `<div class="notice" style="margin-top:12px">${esc(S.msg)}</div>` : ''}</div>`;
+  document.getElementById('imp').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const d = JSON.parse(await f.text());
+      for (const c of d.children || []) await DB.put('children', c);
+      for (const s of d.sessions || []) { const old = await DB.get('sessions', s.id); if (old?.audio) s.audio = old.audio; await DB.put('sessions', s); }
+      S.msg = `복원 완료: 아이 ${(d.children || []).length}명, 상담 ${(d.sessions || []).length}건`;
+    } catch { S.msg = '올바른 백업 파일이 아니에요.'; }
+    render();
+  };
+}
+
+/* ---------- 설정 ---------- */
+async function settings() {
+  document.getElementById('title').textContent = '설정';
+  $app.innerHTML = `<div class="card"><h3>AI 연결</h3>
+  <div class="mute">Anthropic API 키는 이 기기의 브라우저에만 저장되고, AI 분석을 요청할 때만 Anthropic 서버로 전송돼요.</div>
+  <label>API 키</label><input id="s_key" type="password" value="${esc(cfg.key)}" placeholder="sk-ant-...">
+  <label>모델</label><input id="s_model" value="${esc(cfg.model)}">
+  <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="s_anon" style="width:auto" ${cfg.anon ? 'checked' : ''}> AI로 보낼 때 아이 이름을 '아이'로 바꾸기 (권장)</label>
+  <div class="mute" style="margin-top:8px">※ 상담 대화에 부모님/아이 실명, 전화번호 등이 나오면 그대로 전송될 수 있어요. 가능하면 호칭으로 말하거나 분석 전에 대화 내용에서 지워 주세요.</div>
+  <div class="row" style="margin-top:12px"><button class="b" data-act="saveSettings">저장</button><button class="b sec" data-act="tab" data-v="home">닫기</button></div></div>`;
+}
+
+/* ============ 이벤트 ============ */
+document.addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-act]'); if (!el) return;
+  const act = el.dataset.act, id = el.dataset.id;
+  if (act === 'tab') return go(el.dataset.v, { tab: el.dataset.v, childId: null });
+  if (act === 'settings') return go('settings');
+  if (act === 'saveSettings') { cfg.key = document.getElementById('s_key').value.trim(); cfg.model = document.getElementById('s_model').value.trim() || 'claude-sonnet-4-5'; cfg.anon = document.getElementById('s_anon').checked; return go('home', { tab: 'home' }); }
+  if (act === 'newChild') return go('childForm', { childId: null });
+  if (act === 'editChild') return go('childForm', { childId: id });
+  if (act === 'openChild') return go('child', { childId: id, tab: 'home' });
+  if (act === 'saveChild') {
+    const name = document.getElementById('f_name').value.trim(); if (!name) return alert('이름을 입력해 주세요.');
+    const old = id ? await DB.get('children', id) : {};
+    const c = { ...old, id: id || uid(), name, age: f('f_age'), dx: f('f_dx'), goals: f('f_goals'), parentNote: f('f_pn') };
+    await DB.put('children', c); return go('child', { childId: c.id });
+  }
+  if (act === 'delChild') { if (!confirm('이 아이와 모든 상담 기록을 삭제할까요?')) return; for (const s of (await DB.all('sessions')).filter((s) => s.childId === id)) await DB.del('sessions', s.id); await DB.del('children', id); return go('home', { tab: 'home', childId: null }); }
+  if (act === 'newSession') { const s = { id: uid(), childId: id, date: today() }; await DB.put('sessions', s); return go('prep', { childId: id, sessionId: s.id }); }
+  if (act === 'openSession') { const s = await DB.get('sessions', id); return go('review', { childId: s.childId, sessionId: id }); }
+  if (act === 'reprep') { const s = await DB.get('sessions', id); return go('prep', { childId: s.childId, sessionId: id }); }
+  if (act === 'reRecord') return go('record');
+  if (act === 'openReport') return go('report');
+  if (act === 'backReview') return go('review');
+  if (act === 'genReport') return genReport();
+  if (act === 'printReport') return window.print();
+  if (act === 'copyReport') { try { await navigator.clipboard.writeText(document.getElementById('rp').innerText.replace(/\n{3,}/g, '\n\n')); el.textContent = '복사됨'; } catch {} return; }
+  if (act === 'genPrep') return genPrep();
+  if (act === 'toRecord') { const s = await DB.get('sessions', S.sessionId); const t = document.getElementById('p_today'); if (t) { s.today = t.value; s.worry = document.getElementById('p_worry').value; await DB.put('sessions', s); } return go('record'); }
+  if (act === 'recStart') return recStart();
+  if (act === 'recStop') return recStopUI();
+  if (act === 'saveAnalyze') return persistSession(true);
+  if (act === 'saveOnly') return persistSession(false);
+  if (act === 'analyzeNow') { S.busy = true; S.msg = ''; render(); try { await analyzeSession(); } catch (er) { S.msg = er.message; } S.busy = false; return render(); }
+  if (act === 'copyFm') { try { await navigator.clipboard.writeText(document.getElementById('fm').textContent); el.textContent = '복사됨'; } catch {} return; }
+  if (act === 'delSession') { if (!confirm('이 상담 기록을 삭제할까요? (녹음 포함)')) return; const s = await DB.get('sessions', id); await DB.del('sessions', id); return go('child', { childId: s.childId }); }
+  if (act === 'coachGo') {
+    const q = document.getElementById('c_q').value.trim(); if (!q) return;
+    const a = document.getElementById('c_a').value.trim();
+    S.busy = true; S.msg = ''; S.coachOut = ''; render();
+    try { S.coachOut = await callAI(`부모님 질문: ${q}\n${a ? '내가 하려던 답변: ' + a + '\n' : ''}
+다음 형식으로 간결하게 답하세요.
+1) 이 질문 뒤에 있는 부모의 진짜 걱정 (한 줄)
+2) 추천 답변 (구어체, 3~5문장: 공감 → 근거/관찰 → 다음 단계)
+3) ${a ? '내 답변 첨삭 (좋은 점 1개, 고칠 점 2개)' : '피해야 할 말 1~2개'}
+4) 덧붙이면 좋은 한 문장`, 1200); } catch (er) { S.msg = er.message; }
+    S.busy = false; return render();
+  }
+  if (act === 'export') {
+    const d = { version: 1, children: await DB.all('children'), sessions: (await DB.all('sessions')).map(({ audio, ...r }) => r) };
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(d, null, 1)], { type: 'application/json' }));
+    a.download = 'parent-coach-backup-' + today() + '.json'; a.click(); return;
+  }
+});
+function f(id) { return document.getElementById(id).value.trim(); }
+
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+render();
+</script>
+</body>
+</html>
