@@ -56,6 +56,12 @@ pre{white-space:pre-wrap;font:inherit;margin:0}
 .rp h2{font-size:22px;margin:0 0 4px;color:#2f6f6a}
 .rp h3{font-size:16px;margin:18px 0 6px;color:#2f6f6a;border-bottom:2px solid #e3f0ee;padding-bottom:4px}
 .rp .ft{margin-top:24px;padding-top:10px;border-top:1px solid #dfe5e2;font-size:14px;color:#66736f;text-align:right}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;display:flex;align-items:center;justify-content:center;padding:12px}
+.mbox{background:var(--card);color:var(--ink);border-radius:12px;padding:16px;max-width:760px;width:100%;max-height:92vh;overflow:auto}
+.mbox textarea{min-height:130px}
+.mbox h4{margin:14px 0 4px;font-size:15px}
+.chip{display:inline-block;padding:2px 10px;border-radius:999px;background:var(--ok2);color:var(--ok);font-size:13px;margin:2px 4px 2px 0}
+a.b{display:inline-block;text-decoration:none}
 @media print{header,nav,.noprint{display:none!important}body{background:#fff}main{padding:0;max-width:none}.rp{border:0;padding:0;margin:0;max-width:none}}
 </style>
 </head>
@@ -109,6 +115,10 @@ const cfg = {
   set center(v) { try { localStorage.setItem('pc_center', v); } catch {} },
   get therapist() { try { return localStorage.getItem('pc_th') || ''; } catch { return ''; } },
   set therapist(v) { try { localStorage.setItem('pc_th', v); } catch {} },
+  get mode() { try { return localStorage.getItem('pc_mode') || 'auto'; } catch { return 'auto'; } },
+  set mode(v) { try { localStorage.setItem('pc_mode', v); } catch {} },
+  get maskWords() { try { return localStorage.getItem('pc_mask') || ''; } catch { return ''; } },
+  set maskWords(v) { try { localStorage.setItem('pc_mask', v); } catch {} },
   get anon() { try { return localStorage.getItem('pc_anon') !== '0'; } catch { return true; } },
   set anon(v) { try { localStorage.setItem('pc_anon', v ? '1' : '0'); } catch {} },
 };
@@ -123,9 +133,81 @@ const SYSTEM = `당신은 아동발달센터 작업치료사의 '부모 상담' 
 - 진단이나 의학적 판단을 단정하지 말고 필요 시 의사/타 전문가 연계를 안내.
 - 답변은 한국어, 실제로 말할 수 있는 구어체 문장으로.`;
 
+/* ---------- 개인정보 자동 가리기 (밖으로 나가는 글에만 적용, 기기 안 원본은 그대로) ---------- */
+const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const splitWords = (x) => String(x || '').split(/[,\n，、]/).map((w) => w.trim()).filter(Boolean);
+const isKo3 = (n) => /^[가-힣]{3}$/.test(n || '');
+function wordRules(ctx) {
+  const rules = [];
+  const add = (w, r, k) => { if (w && w.length >= 2) rules.push([w, r, k]); };
+  ctx.children.forEach((c) => {
+    const kid = !ctx.currentId || c.id === ctx.currentId ? '아이' : '다른 아이';
+    add(c.name, kid, '아이 이름'); if (isKo3(c.name)) add(c.name.slice(1), kid, '아이 이름');
+    splitWords(c.parentNames).forEach((p) => { add(p, '부모님', '보호자 이름'); if (isKo3(p)) add(p.slice(1), '부모님', '보호자 이름'); });
+    splitWords(c.maskWords).forEach((w) => add(w, '[가림]', '지정 단어'));
+  });
+  splitWords(cfg.maskWords).forEach((w) => add(w, '[가림]', '지정 단어'));
+  add(cfg.center, '[센터]', '센터명');
+  add(cfg.therapist, '[치료사]', '치료사 이름'); if (isKo3(cfg.therapist)) add(cfg.therapist.slice(1), '[치료사]', '치료사 이름');
+  return rules.sort((a, b) => b[0].length - a[0].length);
+}
+const PATTERNS = [
+  ['주민번호', /(?<!\d)\d{6}[-\s]?[1-4]\d{6}(?!\d)/g, '[주민번호]'],
+  ['전화번호', /(?<!\d)0(?:1[016-9]|2|[3-6][1-5]|70|50\d?)[-.\s]?\d{3,4}[-.\s]?\d{4}(?!\d)/g, '[전화번호]'],
+  ['카드번호', /(?<!\d)(?:\d{4}[-\s]?){3}\d{4}(?!\d)/g, '[카드번호]'],
+  ['이메일', /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[이메일]'],
+  ['주소', /[가-힣0-9]{2,}(?:아파트|빌라|맨션|오피스텔)(?:\s?\d+동)?(?:\s?\d+호)?/g, '[주소]'],
+  ['주소', /[가-힣]{2,}(?<!으)(?:대로|로|길)\s?\d+(?:-\d+)?(?:번길(?:\s?\d+(?:-\d+)?)?)?(?![~\d]|\s?(?:번(?!길)|개|회|분|초|명|살|세|시|달|주|일|년|월|배|점|장|곡|문장|문|줄|가지|cm|mm|kg|%))/g, '[주소]'],
+  ['긴 숫자', /(?<!\d)\d[\d-]{8,}\d(?!\d)/g, '[번호]'],
+];
+function redact(text, ctx) {
+  let t = String(text); const found = {}; const bump = (k) => (found[k] = (found[k] || 0) + 1);
+  wordRules(ctx).forEach(([w, r, k]) => { const isName = k === '아이 이름' || k === '보호자 이름' || k === '치료사 이름'; t = t.replace(new RegExp(escRe(w) + (isName ? '(?:이(?=[가는를도랑의만에께한]|[\\s.,!?]|$))?' : ''), 'g'), () => { bump(k); return r; }); });
+  PATTERNS.forEach(([k, re, r]) => { t = t.replace(re, (m) => { if (k === '긴 숫자' && m.replace(/\D/g, '').length < 10) return m; bump(k); return r; }); });
+  return { text: t, found };
+}
+async function redactText(text) {
+  if (!cfg.anon) return { text: String(text), found: {} };
+  return redact(text, { children: await DB.all('children'), currentId: S.childId });
+}
+const foundSummary = (f) => Object.entries(f).map(([k, v]) => k + ' ' + v + '건').join(', ') || '가려진 항목 없음';
+
+/* ---------- 복사·붙여넣기 모드 (API 키 없이 무료 AI 채팅 이용) ---------- */
+function pasteFlow(prompt, found) {
+  return new Promise((res, rej) => {
+    const full = '아래 [역할과 원칙]을 따라 [요청]에 답해 주세요.\n\n[역할과 원칙]\n' + SYSTEM + '\n\n[요청]\n' + prompt;
+    const m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = `<div class="mbox">
+      <h3 style="margin:0 0 4px">AI에게 물어보기 (무료 방식)</h3>
+      <div class="mute">개인정보는 아래처럼 자동으로 가려졌어요. 그래도 남은 실명이 있으면 글에서 직접 지워 주세요.</div>
+      <div id="m_sum" style="margin-top:6px"></div>
+      <h4>① 아래 글을 복사해서 AI 채팅창에 붙여넣기</h4>
+      <textarea id="m_prompt"></textarea>
+      <div class="row" style="margin-top:8px"><button class="b" id="m_copy">복사하기</button>
+        <a class="b sec" href="https://claude.ai/new" target="_blank" rel="noopener">Claude 열기</a>
+        <a class="b sec" href="https://chatgpt.com/" target="_blank" rel="noopener">ChatGPT 열기</a>
+        <a class="b sec" href="https://gemini.google.com/app" target="_blank" rel="noopener">Gemini 열기</a></div>
+      <h4>② AI가 답한 내용을 전부 복사해서 여기에 붙여넣기</h4>
+      <textarea id="m_ans" placeholder="AI의 답변 전체를 붙여넣으세요"></textarea>
+      <div class="row" style="margin-top:10px"><button class="b" id="m_ok">결과 적용</button><button class="b sec" id="m_no">취소</button></div></div>`;
+    document.body.appendChild(m);
+    m.querySelector('#m_prompt').value = full;
+    m.querySelector('#m_sum').innerHTML = (Object.keys(found).length ? Object.entries(found).map(([k, v]) => `<span class="chip">${esc(k)} ${v}건 가림</span>`).join('') : '<span class="mute">자동으로 가려진 항목이 없어요.</span>');
+    const close = () => m.remove();
+    m.querySelector('#m_copy').onclick = async (e) => {
+      const ta = m.querySelector('#m_prompt');
+      try { await navigator.clipboard.writeText(ta.value); } catch { ta.select(); document.execCommand('copy'); }
+      e.target.textContent = '복사됨 ✓';
+    };
+    m.querySelector('#m_ok').onclick = () => { const v = m.querySelector('#m_ans').value.trim(); if (!v) return; close(); res(v); };
+    m.querySelector('#m_no').onclick = () => { close(); rej(new Error('취소했어요.')); };
+  });
+}
+
 async function callAI(userText, maxTokens = 2500) {
-  if (!cfg.key) throw new Error('설정에서 Anthropic API 키를 먼저 입력해 주세요.');
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
+  const r = await redactText(userText);
+  if (cfg.mode === 'paste' || !cfg.key) return pasteFlow(r.text, r.found);
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -133,10 +215,10 @@ async function callAI(userText, maxTokens = 2500) {
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true',
     },
-    body: JSON.stringify({ model: cfg.model, max_tokens: maxTokens, system: SYSTEM, messages: [{ role: 'user', content: userText }] }),
+    body: JSON.stringify({ model: cfg.model, max_tokens: maxTokens, system: SYSTEM, messages: [{ role: 'user', content: r.text }] }),
   });
-  const j = await r.json();
-  if (!r.ok) throw new Error(j.error?.message || 'AI 호출 실패 (' + r.status + ')');
+  const j = await resp.json();
+  if (!resp.ok) throw new Error(j.error?.message || 'AI 호출 실패 (' + resp.status + ')');
   return j.content.map((c) => c.text || '').join('');
 }
 function parseJSON(t) {
@@ -189,7 +271,7 @@ async function home() {
   const sess = await DB.all('sessions');
   const cnt = {}; sess.forEach((s) => (cnt[s.childId] = (cnt[s.childId] || 0) + 1));
   $app.innerHTML = `
-  ${cfg.key ? '' : '<div class="notice">AI 분석을 쓰려면 오른쪽 위 <b>설정</b>에서 API 키를 입력해 주세요. (키 없이도 녹음·기록은 가능)</div>'}
+  ${cfg.key && cfg.mode !== 'paste' ? '' : '<div class="notice">지금은 <b>복사·붙여넣기(무료)</b> 방식이에요. AI 분석 때 안내 창이 열려요. 설정에서 API 키를 넣으면 자동 분석으로 바뀌어요.</div>'}
   <div class="row" style="margin-bottom:12px"><h2 class="grow" style="margin:0">아이 목록 (${kids.length})</h2><button class="b" data-act="newChild">+ 아이 등록</button></div>
   ${kids.length ? kids.map((k) => `<div class="list-item" data-act="openChild" data-id="${k.id}">
     <b>${esc(k.name)}</b> <span class="mute">${esc(k.age || '')}</span>
@@ -207,6 +289,8 @@ async function childForm() {
   <label>진단·주호소</label><textarea id="f_dx" placeholder="예: 소근육 발달 지연, 감각 과민, 글씨 쓰기 어려움">${esc(c.dx)}</textarea>
   <label>치료 목표</label><textarea id="f_goals" placeholder="예: 연필 잡기 안정, 옷 단추 채우기, 촉각 방어 줄이기">${esc(c.goals)}</textarea>
   <label>부모 성향·특이사항 (걱정, 자주 하는 질문, 기대 등)</label><textarea id="f_pn">${esc(c.parentNote)}</textarea>
+  <label>보호자 이름 (AI로 보낼 때 '부모님'으로 바뀜 / 여러 명은 쉼표로)</label><input id="f_pnames" value="${esc(c.parentNames)}">
+  <label>추가로 가릴 단어 (형제자매 이름, 학교·어린이집·학원 이름 등 / 쉼표로)</label><input id="f_mask" value="${esc(c.maskWords)}">
   <div class="row" style="margin-top:14px"><button class="b" data-act="saveChild" data-id="${c.id || ''}">저장</button><button class="b sec" data-act="tab" data-v="home">취소</button>
   ${c.id ? `<span class="grow"></span><button class="b red" data-act="delChild" data-id="${c.id}">삭제</button>` : ''}</div></div>`;
 }
@@ -580,10 +664,16 @@ async function settings() {
   document.getElementById('title').textContent = '설정';
   $app.innerHTML = `<div class="card"><h3>AI 연결</h3>
   <div class="mute">Anthropic API 키는 이 기기의 브라우저에만 저장되고, AI 분석을 요청할 때만 Anthropic 서버로 전송돼요.</div>
+  <label>AI 연결 방식</label><select id="s_mode"><option value="auto" ${cfg.mode !== 'paste' ? 'selected' : ''}>자동 (API 키 사용 · 유료)</option><option value="paste" ${cfg.mode === 'paste' ? 'selected' : ''}>복사·붙여넣기 (무료 · 키 불필요)</option></select>
+  <div class="mute">키가 없으면 자동으로 복사·붙여넣기 방식이 돼요.</div>
   <label>API 키</label><input id="s_key" type="password" value="${esc(cfg.key)}" placeholder="sk-ant-...">
   <label>모델</label><input id="s_model" value="${esc(cfg.model)}">
-  <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="s_anon" style="width:auto" ${cfg.anon ? 'checked' : ''}> AI로 보낼 때 아이 이름을 '아이'로 바꾸기 (권장)</label>
-  <div class="mute" style="margin-top:8px">※ 상담 대화에 부모님/아이 실명, 전화번호 등이 나오면 그대로 전송될 수 있어요. 가능하면 호칭으로 말하거나 분석 전에 대화 내용에서 지워 주세요.</div>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="s_anon" style="width:auto" ${cfg.anon ? 'checked' : ''}> AI로 보낼 때 개인정보 자동 가리기 (권장)</label>
+  <div class="mute" style="margin-top:8px">가려지는 것: 등록한 아이·보호자 이름, 전화번호, 주민번호, 이메일, 카드·계좌 번호, 주소 일부, 센터명·치료사 이름, 직접 지정한 단어. 이름은 <b>등록해 둔 것만</b> 찾을 수 있어요. 기록 원본은 이 기기에 그대로 남고, 밖으로 나가는 글만 가려져요. 완벽하지 않으니 복사 전에 꼭 훑어보세요.</div>
+  <label>모든 아이에게 공통으로 가릴 단어 (쉼표로 구분)</label><input id="s_mask" value="${esc(cfg.maskWords)}" placeholder="예: OO아동발달센터, △△초등학교">
+  <label>가리기 테스트</label><textarea id="s_test" style="min-height:70px" placeholder="예: 민준이 어머니 010-1234-5678로 연락 주세요"></textarea>
+  <div class="row" style="margin-top:6px"><button class="b sec" data-act="testMask">가려진 모습 보기</button></div>
+  <div id="s_sum" class="mute" style="margin-top:6px"></div><pre id="s_out" style="margin-top:4px"></pre>
   <div class="row" style="margin-top:12px"><button class="b" data-act="saveSettings">저장</button><button class="b sec" data-act="tab" data-v="home">닫기</button></div></div>`;
 }
 
@@ -593,14 +683,15 @@ document.addEventListener('click', async (e) => {
   const act = el.dataset.act, id = el.dataset.id;
   if (act === 'tab') return go(el.dataset.v, { tab: el.dataset.v, childId: null });
   if (act === 'settings') return go('settings');
-  if (act === 'saveSettings') { cfg.key = document.getElementById('s_key').value.trim(); cfg.model = document.getElementById('s_model').value.trim() || 'claude-sonnet-4-5'; cfg.anon = document.getElementById('s_anon').checked; return go('home', { tab: 'home' }); }
+  if (act === 'saveSettings') { cfg.key = document.getElementById('s_key').value.trim(); cfg.model = document.getElementById('s_model').value.trim() || 'claude-sonnet-4-5'; cfg.anon = document.getElementById('s_anon').checked; cfg.mode = document.getElementById('s_mode').value; cfg.maskWords = document.getElementById('s_mask').value.trim(); return go('home', { tab: 'home' }); }
+  if (act === 'testMask') { const r = await redactText(document.getElementById('s_test').value); document.getElementById('s_out').textContent = r.text; document.getElementById('s_sum').textContent = foundSummary(r.found); return; }
   if (act === 'newChild') return go('childForm', { childId: null });
   if (act === 'editChild') return go('childForm', { childId: id });
   if (act === 'openChild') return go('child', { childId: id, tab: 'home' });
   if (act === 'saveChild') {
     const name = document.getElementById('f_name').value.trim(); if (!name) return alert('이름을 입력해 주세요.');
     const old = id ? await DB.get('children', id) : {};
-    const c = { ...old, id: id || uid(), name, age: f('f_age'), dx: f('f_dx'), goals: f('f_goals'), parentNote: f('f_pn') };
+    const c = { ...old, id: id || uid(), name, age: f('f_age'), dx: f('f_dx'), goals: f('f_goals'), parentNote: f('f_pn'), parentNames: f('f_pnames'), maskWords: f('f_mask') };
     await DB.put('children', c); return go('child', { childId: c.id });
   }
   if (act === 'delChild') { if (!confirm('이 아이와 모든 상담 기록을 삭제할까요?')) return; for (const s of (await DB.all('sessions')).filter((s) => s.childId === id)) await DB.del('sessions', s.id); await DB.del('children', id); return go('home', { tab: 'home', childId: null }); }
