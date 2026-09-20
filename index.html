@@ -430,7 +430,12 @@ async function record() {
       <button class="b" id="btnRec" data-act="recStart">● 녹음 시작</button>
       <button class="b red" id="btnStop" data-act="recStop" style="display:none">■ 종료</button>
     </div>
-    <div class="mute" style="text-align:center;margin-top:8px">${SR ? '받아쓰기: 크롬/엣지에서 실시간으로 글자가 나타나요.' : '이 브라우저는 실시간 받아쓰기를 지원하지 않아요. 크롬/엣지를 쓰거나, 종료 후 직접 입력하세요.'}</div>
+    <div class="row" style="justify-content:center;gap:18px;margin-top:10px">
+      <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="o_stt" style="width:auto" ${SR && recOpt('stt') ? 'checked' : ''} ${SR ? '' : 'disabled'}> 실시간 받아쓰기</label>
+      <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="o_audio" style="width:auto" ${recOpt('audio') ? 'checked' : ''}> 녹음 파일 저장</label>
+    </div>
+    <div class="mute" style="text-align:center;margin-top:6px">${SR ? '받아쓰기는 크롬/엣지에서 잘 돼요. ' : '이 브라우저는 실시간 받아쓰기를 지원하지 않아요(크롬/엣지 권장). '}폰에서는 두 가지를 함께 켜면 마이크가 충돌할 수 있어서, 처음엔 받아쓰기만 켜 두는 걸 추천해요. 받아쓰기가 안 되면 키보드의 마이크 버튼(음성 입력)으로 아래 칸에 말해서 입력해도 돼요.</div>
+    <div id="r_stt_msg" class="notice" style="display:none;margin-top:10px"></div>
   </div>
   <div class="card"><h3>대화 내용</h3>
     <div class="mute">화자 구분이 안 되므로 필요하면 줄 앞에 "치료사:" "부모:"를 붙여 주세요. 오인식된 부분은 직접 고칠 수 있어요.</div>
@@ -442,16 +447,61 @@ async function record() {
   ${S.msg ? `<div class="notice">${esc(S.msg)}</div>` : ''}`;
 }
 
-const REC = { stream: null, mr: null, chunks: [], sr: null, on: false, t0: 0, timer: null, finalText: '' };
+const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+function recOpt(k) { try { const v = localStorage.getItem('pc_rec_' + k); if (v !== null) return v === '1'; } catch {} return k === 'stt' ? true : !IS_MOBILE; }
+const REC = { stream: null, mr: null, chunks: [], sr: null, on: false, t0: 0, timer: null, finalText: '', sttStopped: false, fast: 0, slow: 0, lastStart: 0 };
+function sttPaused(text) {
+  const el = document.getElementById('r_stt_msg'); if (!el) return;
+  el.style.display = '';
+  el.innerHTML = esc(text) + '<div style="margin-top:8px"><button class="b sec" data-act="sttRestart">받아쓰기 이어서 시작</button></div>';
+}
+function sttNote(text) { const el = document.getElementById('r_stt_msg'); if (!el) return; el.style.display = text ? '' : 'none'; el.textContent = text || ''; }
+function startSTT() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return;
+  const sr = new SR(); REC.sr = sr; sr.lang = 'ko-KR'; sr.continuous = true; sr.interimResults = true;
+  sr.onaudiostart = () => {
+    if (Date.now() - REC.lastStart > 2500) {           // 시작이 오래 걸림 = 마이크 허용 창이 떴을 가능성
+      REC.slow++;
+      if (REC.slow >= 2 && REC.on) { REC.sttStopped = true; try { sr.stop(); } catch {} sttPaused('받아쓰기를 시작할 때마다 마이크 허용 창이 뜨는 것 같아서 자동 이어받기를 멈췄어요. 브라우저 설정 > 사이트 권한에서 이 주소의 마이크를 "허용"으로 고정한 뒤 이어서 시작해 주세요.'); }
+    }
+  };
+  sr.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) REC.finalText += t.trim() + '\n'; else interim += t;
+    }
+    const el = document.getElementById('r_text'); if (el) el.value = REC.finalText + interim;
+  };
+  sr.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { REC.sttStopped = true; sttPaused('받아쓰기용 마이크 권한이 막혀 있어요. 브라우저 설정 > 사이트 권한에서 이 주소의 마이크를 "허용"으로 바꾼 뒤 이어서 시작해 주세요.'); }
+    else if (e.error === 'audio-capture') { REC.sttStopped = true; sttPaused('마이크를 다른 기능이 쓰고 있어요. "녹음 파일 저장"을 끄고 다시 해 보세요.'); }
+  };
+  sr.onend = () => {
+    if (!REC.on || REC.sttStopped) return;
+    REC.fast = Date.now() - REC.lastStart < 1200 ? REC.fast + 1 : 0;
+    if (REC.fast >= 3) { REC.sttStopped = true; sttPaused('받아쓰기가 계속 끊겨서 잠시 멈췄어요.'); return; }
+    setTimeout(() => { if (REC.on && !REC.sttStopped) { try { REC.lastStart = Date.now(); sr.start(); } catch {} } }, IS_MOBILE ? 400 : 0);
+  };
+  REC.lastStart = Date.now();
+  try { sr.start(); } catch {}
+}
 async function recStart() {
   const ta = document.getElementById('r_text');
-  try {
-    REC.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch (e) { S.msg = '마이크를 사용할 수 없어요. 브라우저의 마이크 권한을 허용해 주세요.'; return render(); }
-  REC.chunks = [];
-  REC.mr = new MediaRecorder(REC.stream);
-  REC.mr.ondataavailable = (e) => e.data.size && REC.chunks.push(e.data);
-  REC.mr.start(1000);
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const useSTT = !!SR && document.getElementById('o_stt').checked;
+  const useAudio = document.getElementById('o_audio').checked;
+  try { localStorage.setItem('pc_rec_stt', useSTT ? '1' : '0'); localStorage.setItem('pc_rec_audio', useAudio ? '1' : '0'); } catch {}
+  if (!useSTT && !useAudio) return sttNote('실시간 받아쓰기나 녹음 파일 저장 중 하나는 켜 주세요.');
+  sttNote('');
+  REC.chunks = []; REC.mr = null; REC.stream = null; REC.sttStopped = false; REC.fast = 0; REC.slow = 0;
+  if (useAudio) {
+    try { REC.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { return sttNote('마이크를 사용할 수 없어요. 브라우저 설정 > 사이트 권한에서 이 주소의 마이크를 "허용"으로 바꿔 주세요.'); }
+    REC.mr = new MediaRecorder(REC.stream);
+    REC.mr.ondataavailable = (e) => e.data.size && REC.chunks.push(e.data);
+    REC.mr.start(1000);
+  }
   REC.on = true; REC.t0 = Date.now(); REC.finalText = ta.value ? ta.value.trimEnd() + '\n' : '';
   document.getElementById('btnRec').style.display = 'none';
   document.getElementById('btnStop').style.display = '';
@@ -460,21 +510,7 @@ async function recStart() {
     const sec = Math.floor((Date.now() - REC.t0) / 1000);
     const el = document.getElementById('tt'); if (el) el.textContent = String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
   }, 500);
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (SR) {
-    REC.sr = new SR(); REC.sr.lang = 'ko-KR'; REC.sr.continuous = true; REC.sr.interimResults = true;
-    REC.sr.onresult = (e) => {
-      let interim = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) REC.finalText += t.trim() + '\n'; else interim += t;
-      }
-      const el = document.getElementById('r_text'); if (el) el.value = REC.finalText + interim;
-    };
-    REC.sr.onend = () => { if (REC.on) { try { REC.sr.start(); } catch {} } };
-    REC.sr.onerror = () => {};
-    try { REC.sr.start(); } catch {}
-  }
+  if (useSTT) startSTT();
 }
 function recStop() {
   return new Promise((res) => {
@@ -498,7 +534,7 @@ async function recStopUI() {
   document.getElementById('btnStop').style.display = 'none';
   document.getElementById('btnRec').style.display = '';
   document.getElementById('btnRec').textContent = '● 이어서 녹음';
-  document.getElementById('timer').textContent = '녹음 저장됨';
+  document.getElementById('timer').textContent = pendingAudio ? '녹음 저장됨' : '받아쓰기 종료';
 }
 async function persistSession(analyze) {
   if (REC.on) await recStopUI();
@@ -796,6 +832,7 @@ document.addEventListener('click', async (e) => {
   if (act === 'genPrep') return genPrep();
   if (act === 'toRecord') { const s = await DB.get('sessions', S.sessionId); const t = document.getElementById('p_today'); if (t) { s.today = t.value; s.worry = document.getElementById('p_worry').value; await DB.put('sessions', s); } return go('record'); }
   if (act === 'recStart') return recStart();
+  if (act === 'sttRestart') { REC.sttStopped = false; REC.fast = 0; REC.slow = 0; sttNote(''); if (REC.on) startSTT(); return; }
   if (act === 'recStop') return recStopUI();
   if (act === 'saveAnalyze') return persistSession(true);
   if (act === 'saveOnly') return persistSession(false);
