@@ -124,14 +124,27 @@ const cfg = {
 };
 
 /* ============ AI 호출 ============ */
-const SYSTEM = `당신은 아동발달센터 작업치료사의 '부모 상담' 코치입니다. 한국 부모를 대상으로 40분 수업 후 10분 상담을 하는 2년차 작업치료사를 돕습니다.
-목표: 부모가 치료사에게 신뢰를 느끼고 치료를 지속하도록, 전문성과 따뜻함을 갖춘 상담을 하게 돕는 것.
+/* ---------- 치료사 프로필 → AI 안내문 ---------- */
+const PROF_DEF = { job: '작업치료사', years: '', clients: '', style: 'coach', extra: '' };
+function getProf() { try { return { ...PROF_DEF, ...JSON.parse(localStorage.getItem('pc_prof') || '{}') }; } catch { return { ...PROF_DEF }; } }
+function setProf(p) { try { localStorage.setItem('pc_prof', JSON.stringify(p)); } catch {} }
+function systemPrompt() {
+  const p = getProf();
+  const who = (p.job || '치료사') + (p.years ? '(경력 ' + p.years + '년)' : '');
+  let t = `당신은 아동 발달·재활 분야 치료사의 '부모 상담' 도우미입니다. 사용자는 ${who}이고, ${p.clients ? '주로 ' + p.clients + '을(를) 만나며, ' : ''}한국 부모를 대상으로 수업 후 짧은 상담을 합니다.
+목표: 부모가 치료사에게 신뢰를 느끼고 치료를 지속하도록, 전문성과 따뜻함을 갖춘 상담을 돕는 것.
 원칙:
 - 결론(아이의 오늘 변화)을 먼저, 근거(관찰한 구체적 장면)를 다음, 가정에서 할 일 1~2개, 다음 목표 순서로 말하기.
 - 전문용어는 쉬운 말로 풀어 쓰고, 필요하면 용어를 한 번만 덧붙이기.
 - 아이의 강점을 먼저 말하되 과장/허위 약속(완치, 기간 보장)은 하지 않기. 부족한 점은 '다음 목표'로 프레이밍하기.
 - 진단이나 의학적 판단을 단정하지 말고 필요 시 의사/타 전문가 연계를 안내.
 - 답변은 한국어, 실제로 말할 수 있는 구어체 문장으로.`;
+  t += p.style === 'expert'
+    ? '\n도움 방식: 사용자는 경력이 많은 전문가입니다. 기본기 설명이나 훈계조 조언은 생략하고 핵심만 간결하게 제시하세요. 코칭은 놓친 신호, 표현 다듬기, 부모별 맞춤 접근 위주로 하고, 근거 없는 칭찬은 하지 마세요.'
+    : '\n도움 방식: 사용자는 상담 스킬을 키우는 중입니다. 잘한 점과 개선할 점을 실제 대화 표현과 함께 구체적으로 알려 주세요.';
+  if (p.extra) t += '\n사용자의 추가 지침: ' + p.extra;
+  return t;
+}
 
 /* ---------- 개인정보 자동 가리기 (밖으로 나가는 글에만 적용, 기기 안 원본은 그대로) ---------- */
 const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -173,9 +186,9 @@ async function redactText(text) {
 const foundSummary = (f) => Object.entries(f).map(([k, v]) => k + ' ' + v + '건').join(', ') || '가려진 항목 없음';
 
 /* ---------- 복사·붙여넣기 모드 (API 키 없이 무료 AI 채팅 이용) ---------- */
-function pasteFlow(prompt, found) {
+function pasteFlow(prompt, found, sys) {
   return new Promise((res, rej) => {
-    const full = '아래 [역할과 원칙]을 따라 [요청]에 답해 주세요.\n\n[역할과 원칙]\n' + SYSTEM + '\n\n[요청]\n' + prompt;
+    const full = '아래 [역할과 원칙]을 따라 [요청]에 답해 주세요.\n\n[역할과 원칙]\n' + sys + '\n\n[요청]\n' + prompt;
     const m = document.createElement('div'); m.className = 'modal';
     m.innerHTML = `<div class="mbox">
       <h3 style="margin:0 0 4px">AI에게 물어보기 (무료 방식)</h3>
@@ -206,7 +219,8 @@ function pasteFlow(prompt, found) {
 
 async function callAI(userText, maxTokens = 2500) {
   const r = await redactText(userText);
-  if (cfg.mode === 'paste' || !cfg.key) return pasteFlow(r.text, r.found);
+  const sysText = (await redactText(systemPrompt())).text;
+  if (cfg.mode === 'paste' || !cfg.key) return pasteFlow(r.text, r.found, sysText);
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -215,7 +229,7 @@ async function callAI(userText, maxTokens = 2500) {
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true',
     },
-    body: JSON.stringify({ model: cfg.model, max_tokens: maxTokens, system: SYSTEM, messages: [{ role: 'user', content: r.text }] }),
+    body: JSON.stringify({ model: cfg.model, max_tokens: maxTokens, system: sysText, messages: [{ role: 'user', content: r.text }] }),
   });
   const j = await resp.json();
   if (!resp.ok) throw new Error(j.error?.message || 'AI 호출 실패 (' + resp.status + ')');
@@ -230,7 +244,7 @@ const anonText = (s, child) => {
   if (!cfg.anon || !child || !child.name) return s;
   return String(s).split(child.name).join('아이');
 };
-const childCtx = (c) => `[아이 정보] 나이/학년: ${c.age || '미입력'} / 진단·주호소: ${c.dx || '미입력'} / 치료 목표: ${c.goals || '미입력'} / 부모 성향·특이사항: ${c.parentNote || '미입력'} / 등록 후 수업 횟수: ${c.sessionsCount || '미입력'}`;
+const childCtx = (c) => `[아이 정보] 나이/학년: ${c.age || '미입력'} / 진단·주호소: ${c.dx || '미입력'} / 치료 목표: ${c.goals || '미입력'} / 부모 성향·특이사항: ${c.parentNote || '미입력'} / 등록 후 수업 횟수: ${c.sessionsCount || '미입력'}${goalCtx(c)}`;
 
 /* ============ 질문/답변 유형 ============ */
 const QTYPES = ['효과·성과 확인', '기간·횟수·종결 시기', '가정 지도 방법', '발달 불안·진단 관련', '행동 문제 대처', '학교·또래 적응', '비용·스케줄', '타 치료·타 기관 비교', '불만·불신 표현', '기타'];
@@ -264,6 +278,60 @@ async function render() {
   } catch (e) { $app.innerHTML = `<div class="card">오류: ${esc(e.message)}</div>`; }
 }
 
+/* ---------- 목표별 진행 기록 ---------- */
+let sessQ = Promise.resolve();
+const updateSession = (id, fn) => (sessQ = sessQ.then(async () => { const x = await DB.get('sessions', id); if (!x) return; await fn(x); await DB.put('sessions', x); }).catch(() => {}));
+const LEVELS = ['', '전적 도움', '많은 도움', '일부 도움', '거의 독립', '독립'];
+const goalVal = (g, v) => (v == null || v === '' ? '-' : g.mode === 'pct' ? v + '%' : v + '단계(' + LEVELS[v] + ')');
+const goalCtx = (c) => ((c.goalItems || []).length ? ' / 목표 항목: ' + c.goalItems.map((g) => g.title + (g.mode === 'pct' ? '(정반응률)' : '(도움 수준 1~5)')).join(', ') : '');
+function goalSummary(c, s) {
+  const L = s.goalLogs || {};
+  const rows = (c.goalItems || []).filter((g) => L[g.id] && L[g.id].v != null).map((g) => g.title + ': ' + goalVal(g, L[g.id].v) + (L[g.id].note ? ' (' + L[g.id].note + ')' : ''));
+  return rows.length ? '\n[오늘 목표별 기록] ' + rows.join(' / ') : '';
+}
+function goalRowHtml(g) {
+  return `<div class="goal-row row" data-gid="${esc(g.id)}" style="margin-bottom:6px"><input class="gr-t grow" placeholder="예: 1~10 수 세기" value="${esc(g.title)}" style="min-width:160px"><select class="gr-m" style="width:auto"><option value="level" ${g.mode !== 'pct' ? 'selected' : ''}>도움 수준(1~5)</option><option value="pct" ${g.mode === 'pct' ? 'selected' : ''}>정반응률(%)</option></select><button type="button" class="b red" data-act="delGoalRow">삭제</button></div>`;
+}
+function goalLogCard(c, s) {
+  const gs = c.goalItems || [];
+  if (!gs.length) return `<div class="card"><h3>오늘 목표별 기록</h3><div class="mute">아이 정보 수정에서 '목표 항목'을 추가하면 수업마다 진행을 기록하고 그래프로 볼 수 있어요.</div></div>`;
+  const L = s.goalLogs || {};
+  return `<div class="card"><h3>오늘 목표별 기록</h3><div class="mute">1 전적 도움 · 2 많은 도움 · 3 일부 도움 · 4 거의 독립 · 5 독립 (정반응률 항목은 0~100 숫자를 적어요). 누르면 바로 저장돼요. 같은 번호를 다시 누르면 취소돼요.</div>`
+    + gs.map((g) => {
+      const v = L[g.id]?.v;
+      const input = g.mode === 'pct'
+        ? `<input class="gl-pct" type="number" min="0" max="100" style="width:110px" value="${v ?? ''}" placeholder="0~100"> %`
+        : [1, 2, 3, 4, 5].map((n) => `<button type="button" class="b ${v === n ? '' : 'sec'} gl-lv" data-act="setLevel" data-v="${n}">${n}</button>`).join('');
+      return `<div style="margin-top:12px" data-goal="${esc(g.id)}"><b>${esc(g.title)}</b><div class="row" style="margin-top:4px">${input}<input class="gl-note grow" style="min-width:160px" placeholder="메모 (예: 6~7에서 헷갈림)" value="${esc(L[g.id]?.note || '')}"></div></div>`;
+    }).join('') + `</div>`;
+}
+function goalProgressCard(c, sess) {
+  const gs = c.goalItems || [];
+  if (!gs.length) return '';
+  const sorted = [...sess].sort((a, b) => a.date.localeCompare(b.date));
+  const blocks = gs.map((g) => {
+    const pts = sorted.filter((x) => x.goalLogs?.[g.id]?.v != null).map((x) => ({ l: x.date.slice(5), v: Number(x.goalLogs[g.id].v) })).slice(-10);
+    if (!pts.length) return `<div style="margin-top:12px"><b>${esc(g.title)}</b> <span class="mute">아직 기록이 없어요</span></div>`;
+    const cur = pts[pts.length - 1].v, d = cur - pts[0].v;
+    const head = `<b>${esc(g.title)}</b> <span class="tag ${d > 0 ? 'ok' : d < 0 ? 'warn' : ''}">현재 ${esc(goalVal(g, cur))}${pts.length > 1 ? (d > 0 ? ' · ▲' + d : d < 0 ? ' · ▼' + Math.abs(d) : ' · 변화 없음') + ' (처음 대비)' : ''}</span>`;
+    return `<div style="margin-top:14px">${head}${pts.length > 1 ? lineChart(pts, g.mode === 'pct' ? 100 : 5, g.mode === 'pct' ? '%' : '') : ''}</div>`;
+  }).join('');
+  return `<div class="card"><h3>목표별 진행</h3>${blocks}</div>`;
+}
+async function goalReportHtml(c, s) {
+  const L = s.goalLogs || {};
+  const gs = (c.goalItems || []).filter((g) => L[g.id] && L[g.id].v != null);
+  if (!gs.length) return '';
+  const prevs = (await DB.all('sessions')).filter((x) => x.childId === c.id && x.id !== s.id && x.date <= s.date).sort((a, b) => a.date.localeCompare(b.date));
+  const rows = gs.map((g) => {
+    const cur = L[g.id].v; let prev = null;
+    prevs.forEach((x) => { const pv = x.goalLogs?.[g.id]?.v; if (pv != null) prev = pv; });
+    const d = prev == null ? '' : cur > prev ? ' (지난번보다 좋아졌어요)' : cur < prev ? ' (오늘은 조금 더 어려워했어요)' : ' (지난번과 비슷해요)';
+    return `<li>${esc(g.title)}: ${esc(goalVal(g, cur))}${d}</li>`;
+  });
+  return `<h3>목표별 진행</h3><ul>${rows.join('')}</ul>`;
+}
+
 /* ---------- 홈 ---------- */
 async function home() {
   document.getElementById('title').textContent = '부모 상담 도우미';
@@ -288,6 +356,8 @@ async function childForm() {
   <label>나이/학년</label><input id="f_age" value="${esc(c.age)}" placeholder="예: 6세, 초1">
   <label>진단·주호소</label><textarea id="f_dx" placeholder="예: 소근육 발달 지연, 감각 과민, 글씨 쓰기 어려움">${esc(c.dx)}</textarea>
   <label>치료 목표</label><textarea id="f_goals" placeholder="예: 연필 잡기 안정, 옷 단추 채우기, 촉각 방어 줄이기">${esc(c.goals)}</textarea>
+  <label>목표 항목 (수업마다 진행을 기록하고 그래프로 봐요)</label><div id="goalRows">${(c.goalItems || []).map(goalRowHtml).join('')}</div>
+  <button type="button" class="b sec" data-act="addGoalRow" style="margin-top:4px">+ 목표 항목 추가</button>
   <label>부모 성향·특이사항 (걱정, 자주 하는 질문, 기대 등)</label><textarea id="f_pn">${esc(c.parentNote)}</textarea>
   <label>보호자 이름 (AI로 보낼 때 '부모님'으로 바뀜 / 여러 명은 쉼표로)</label><input id="f_pnames" value="${esc(c.parentNames)}">
   <label>추가로 가릴 단어 (형제자매 이름, 학교·어린이집·학원 이름 등 / 쉼표로)</label><input id="f_mask" value="${esc(c.maskWords)}">
@@ -306,6 +376,7 @@ async function child() {
   <div class="mute" style="margin-top:8px">치료 목표</div><div>${nl(c.goals || '-')}</div>
   <div class="mute" style="margin-top:8px">부모 성향·특이사항</div><div>${nl(c.parentNote || '-')}</div>
   <div style="margin-top:14px"><button class="b" data-act="newSession" data-id="${c.id}">+ 새 상담 시작</button></div></div>
+  ${goalProgressCard(c, sess)}
   ${growthCard(sess)}
   <h3>상담 기록 (${sess.length})</h3>
   ${sess.map((s) => `<div class="list-item" data-act="openSession" data-id="${s.id}"><b>${esc(s.date)}</b>
@@ -326,6 +397,7 @@ async function prep() {
   <label>오늘 부모님께 꼭 전하고 싶은 것 / 걱정되는 것</label>
   <textarea id="p_worry" style="min-height:60px">${esc(s.worry || '')}</textarea>
   <div class="row" style="margin-top:12px"><button class="b" data-act="genPrep" ${S.busy ? 'disabled' : ''}>상담 준비 만들기 (AI)</button></div></div>
+  ${goalLogCard(c, s)}
   ${S.busy ? '<div class="loading">준비 자료를 만드는 중...</div>' : ''}
   ${S.msg ? `<div class="notice">${esc(S.msg)}</div>` : ''}
   ${s.prep ? prepView(s.prep) : ''}
@@ -451,7 +523,7 @@ async function genPrep() {
   S.busy = true; S.msg = ''; render();
   const prompt = anonText(`${childCtx(c)}
 [오늘 수업 메모] ${s.today}
-[전하고 싶은/걱정되는 점] ${s.worry || '없음'}
+[전하고 싶은/걱정되는 점] ${s.worry || '없음'}${goalSummary(c, s)}
 
 아래 JSON으로만 답하세요(다른 글자 금지). 모든 문장은 부모에게 실제로 말하는 구어체 한국어.
 {"opening":"오프닝 한 문장","progress":["오늘의 변화 1(구체 장면 포함)","..."],"homework":["가정에서 할 일 1","(최대 2개)"],"next_goal":"다음 목표 한두 문장","closing":"마무리 한 문장",
@@ -473,7 +545,7 @@ async function analyzeSession() {
 ${s.transcript}
 [치료사 메모] ${s.memo || '없음'}
 
-치료사(2년차)의 부모 상담을 코칭해 주세요. 아래 JSON으로만 답하세요(다른 글자 금지).
+치료사의 부모 상담을 코칭해 주세요. 아래 JSON으로만 답하세요(다른 글자 금지).
 질문 유형 후보: ${QTYPES.join(', ')}
 답변 유형 후보: ${ATYPES.join(', ')}
 {"score":0~100 정수(신뢰 형성 관점),
@@ -530,10 +602,10 @@ async function review() {
 
 /* ---------- 아이별 성장 그래프 ---------- */
 function lineChart(pts, max, unit) {
-  const W = 600, H = 170, L = 34, R = 12, T = 12, B = 30;
+  const W = 600, H = 170, L = 34, R = 28, T = 14, B = 30;
   const x = (i) => L + (pts.length === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (pts.length - 1));
   const y = (v) => T + (H - T - B) * (1 - v / max);
-  const grid = [0, 0.5, 1].map((g) => `<line x1="${L}" x2="${W - R}" y1="${y(max * g)}" y2="${y(max * g)}" stroke="var(--line)"/><text x="${L - 6}" y="${y(max * g) + 4}" text-anchor="end">${Math.round(max * g)}</text>`).join('');
+  const grid = [0, 0.5, 1].map((g) => `<line x1="${L}" x2="${W - R}" y1="${y(max * g)}" y2="${y(max * g)}" stroke="var(--line)"/><text x="${L - 6}" y="${y(max * g) + 4}" text-anchor="end">${+(max * g).toFixed(1)}</text>`).join('');
   const path = pts.map((p, i) => (i ? 'L' : 'M') + x(i) + ' ' + y(p.v)).join(' ');
   const dots = pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.v)}" r="4" fill="var(--pri)"/><text x="${x(i)}" y="${y(p.v) - 8}" text-anchor="middle" style="fill:var(--ink)">${p.v}${unit || ''}</text><text x="${x(i)}" y="${H - 10}" text-anchor="middle">${esc(p.l)}</text>`).join('');
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="추이 그래프">${grid}<path d="${path}" fill="none" stroke="var(--pri)" stroke-width="2.5"/>${dots}</svg>`;
@@ -561,6 +633,7 @@ async function report() {
   const c = await DB.get('children', s.childId);
   document.getElementById('title').textContent = c.name + ' · 부모님용 리포트';
   const r = s.report;
+  const gHtml = await goalReportHtml(c, s);
   const L = (a) => '<ul>' + (a || []).map((x) => `<li>${esc(fillName(String(x), c.name))}</li>`).join('') + '</ul>';
   const T = (x) => esc(fillName(String(x ?? ''), c.name));
   $app.innerHTML = `
@@ -574,10 +647,11 @@ async function report() {
   ${r ? `<div class="rp" id="rp"><h2>${T(c.name)} 치료 상담 리포트</h2><div style="color:#66736f;font-size:14px">${esc(s.date)}${cfg.center ? ' · ' + esc(cfg.center) : ''}</div>
   <p style="margin-top:14px">${T(r.greeting)}</p>
   <h3>오늘의 모습과 변화</h3>${L(r.highlights)}
+  ${gHtml}
   <h3>집에서 이렇게 해보세요</h3>${L(r.home_tips)}
   <h3>다음 목표</h3><p>${T(r.next_goal)}</p>
   <p>${T(r.closing)}</p>
-  <div class="ft">${cfg.therapist ? '작업치료사 ' + esc(cfg.therapist) : ''}</div></div>` : ''}`;
+  <div class="ft">${cfg.therapist ? (getProf().job || '치료사') + ' ' + esc(cfg.therapist) : ''}</div></div>` : ''}`;
 }
 async function genReport() {
   const s = await DB.get('sessions', S.sessionId);
@@ -588,7 +662,7 @@ async function genReport() {
   S.busy = true; S.msg = ''; render();
   const prompt = anonText(`${childCtx(c)}
 [오늘 수업 메모] ${s.today || '없음'}
-[준비된 변화/과제/목표] ${JSON.stringify({ progress: p.progress, homework: p.homework, next_goal: p.next_goal })}
+[준비된 변화/과제/목표] ${JSON.stringify({ progress: p.progress, homework: p.homework, next_goal: p.next_goal })}${goalSummary(c, s)}
 
 부모님께 드릴 1장짜리 요약 리포트를 만드세요. 아래 JSON으로만 답하세요(다른 글자 금지).
 - 아이를 가리킬 때는 반드시 {이름} 이라고 쓰세요(이름은 시스템이 채웁니다).
@@ -674,24 +748,39 @@ async function settings() {
   <label>가리기 테스트</label><textarea id="s_test" style="min-height:70px" placeholder="예: 민준이 어머니 010-1234-5678로 연락 주세요"></textarea>
   <div class="row" style="margin-top:6px"><button class="b sec" data-act="testMask">가려진 모습 보기</button></div>
   <div id="s_sum" class="mute" style="margin-top:6px"></div><pre id="s_out" style="margin-top:4px"></pre>
+  <h3 style="margin-top:20px">치료사 프로필</h3>
+  <div class="mute">AI가 내 상황에 맞게 답하도록 알려 주세요.</div>
+  <label>직무</label><input id="s_job" value="${esc(getProf().job)}" placeholder="예: 인지치료사, 작업치료사">
+  <label>경력(년)</label><input id="s_years" type="number" min="0" value="${esc(getProf().years)}">
+  <label>주로 만나는 아이</label><input id="s_clients" value="${esc(getProf().clients)}" placeholder="예: 지적장애·발달지연 학령기 아동">
+  <label>AI 도움 방식</label><select id="s_style"><option value="coach" ${getProf().style !== 'expert' ? 'selected' : ''}>상담 스킬 코칭 (잘한 점·개선점을 자세히)</option><option value="expert" ${getProf().style === 'expert' ? 'selected' : ''}>경력자용 (간결하게, 놓친 신호·표현 다듬기 중심)</option></select>
+  <label>추가 지침 (선택)</label><textarea id="s_extra" style="min-height:70px" placeholder="예: 진단명은 쓰지 말고 쉬운 말로 설명해 주세요">${esc(getProf().extra)}</textarea>
   <div class="row" style="margin-top:12px"><button class="b" data-act="saveSettings">저장</button><button class="b sec" data-act="tab" data-v="home">닫기</button></div></div>`;
 }
 
 /* ============ 이벤트 ============ */
 document.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-act]'); if (!el) return;
+  await sessQ;
   const act = el.dataset.act, id = el.dataset.id;
   if (act === 'tab') return go(el.dataset.v, { tab: el.dataset.v, childId: null });
   if (act === 'settings') return go('settings');
-  if (act === 'saveSettings') { cfg.key = document.getElementById('s_key').value.trim(); cfg.model = document.getElementById('s_model').value.trim() || 'claude-sonnet-4-5'; cfg.anon = document.getElementById('s_anon').checked; cfg.mode = document.getElementById('s_mode').value; cfg.maskWords = document.getElementById('s_mask').value.trim(); return go('home', { tab: 'home' }); }
+  if (act === 'saveSettings') { cfg.key = document.getElementById('s_key').value.trim(); cfg.model = document.getElementById('s_model').value.trim() || 'claude-sonnet-4-5'; cfg.anon = document.getElementById('s_anon').checked; cfg.mode = document.getElementById('s_mode').value; cfg.maskWords = document.getElementById('s_mask').value.trim(); setProf({ job: f('s_job') || '치료사', years: f('s_years'), clients: f('s_clients'), style: document.getElementById('s_style').value, extra: f('s_extra') }); return go('home', { tab: 'home' }); }
   if (act === 'testMask') { const r = await redactText(document.getElementById('s_test').value); document.getElementById('s_out').textContent = r.text; document.getElementById('s_sum').textContent = foundSummary(r.found); return; }
+  if (act === 'addGoalRow') { document.getElementById('goalRows').insertAdjacentHTML('beforeend', goalRowHtml({ id: uid(), title: '', mode: 'level' })); return; }
+  if (act === 'delGoalRow') { el.closest('.goal-row').remove(); return; }
+  if (act === 'setLevel') {
+    const box = el.closest('[data-goal]'); const gid = box.dataset.goal; const n = Number(el.dataset.v); let nv = null;
+    await updateSession(S.sessionId, (x) => { x.goalLogs = x.goalLogs || {}; const cur = x.goalLogs[gid] || {}; nv = cur.v === n ? null : n; x.goalLogs[gid] = { ...cur, v: nv }; });
+    box.querySelectorAll('.gl-lv').forEach((b) => b.classList.toggle('sec', Number(b.dataset.v) !== nv)); return;
+  }
   if (act === 'newChild') return go('childForm', { childId: null });
   if (act === 'editChild') return go('childForm', { childId: id });
   if (act === 'openChild') return go('child', { childId: id, tab: 'home' });
   if (act === 'saveChild') {
     const name = document.getElementById('f_name').value.trim(); if (!name) return alert('이름을 입력해 주세요.');
     const old = id ? await DB.get('children', id) : {};
-    const c = { ...old, id: id || uid(), name, age: f('f_age'), dx: f('f_dx'), goals: f('f_goals'), parentNote: f('f_pn'), parentNames: f('f_pnames'), maskWords: f('f_mask') };
+    const c = { ...old, id: id || uid(), name, age: f('f_age'), dx: f('f_dx'), goals: f('f_goals'), parentNote: f('f_pn'), parentNames: f('f_pnames'), maskWords: f('f_mask'), goalItems: [...document.querySelectorAll('.goal-row')].map((r) => ({ id: r.dataset.gid, title: r.querySelector('.gr-t').value.trim(), mode: r.querySelector('.gr-m').value })).filter((g) => g.title) };
     await DB.put('children', c); return go('child', { childId: c.id });
   }
   if (act === 'delChild') { if (!confirm('이 아이와 모든 상담 기록을 삭제할까요?')) return; for (const s of (await DB.all('sessions')).filter((s) => s.childId === id)) await DB.del('sessions', s.id); await DB.del('children', id); return go('home', { tab: 'home', childId: null }); }
@@ -732,6 +821,13 @@ document.addEventListener('click', async (e) => {
   }
 });
 function f(id) { return document.getElementById(id).value.trim(); }
+document.addEventListener('change', (e) => {
+  const t = e.target, box = t.closest && t.closest('[data-goal]');
+  if (!box || !S.sessionId) return;
+  const gid = box.dataset.goal;
+  if (t.classList.contains('gl-pct')) { const n = t.value === '' ? null : Math.max(0, Math.min(100, Number(t.value))); updateSession(S.sessionId, (x) => { x.goalLogs = x.goalLogs || {}; x.goalLogs[gid] = { ...(x.goalLogs[gid] || {}), v: n }; }); }
+  else if (t.classList.contains('gl-note')) updateSession(S.sessionId, (x) => { x.goalLogs = x.goalLogs || {}; x.goalLogs[gid] = { ...(x.goalLogs[gid] || {}), note: t.value }; });
+});
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 render();
