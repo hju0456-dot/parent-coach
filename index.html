@@ -453,9 +453,105 @@ const REC = { stream: null, mr: null, chunks: [], sr: null, on: false, t0: 0, ti
 function sttPaused(text) {
   const el = document.getElementById('r_stt_msg'); if (!el) return;
   el.style.display = '';
-  el.innerHTML = esc(text) + '<div style="margin-top:8px"><button class="b sec" data-act="sttRestart">받아쓰기 이어서 시작</button></div>';
+  el.innerHTML = esc(text) + '<div style="margin-top:8px"><button class="b sec" data-act="sttRestart">받아쓰기 이어서 시작</button> <button class="b sec" data-act="micCheck">마이크 점검 열기</button></div>';
 }
 function sttNote(text) { const el = document.getElementById('r_stt_msg'); if (!el) return; el.style.display = text ? '' : 'none'; el.textContent = text || ''; }
+
+/* ---------- 마이크 점검 ---------- */
+function browserKind() {
+  const ua = navigator.userAgent;
+  const android = /Android/i.test(ua), ios = /iPhone|iPad|iPod/i.test(ua);
+  let k = 'other';
+  if (/SamsungBrowser/i.test(ua)) k = 'samsung';
+  else if (/EdgA|EdgiOS|Edg\//i.test(ua)) k = 'edge';
+  else if (/Firefox|FxiOS/i.test(ua)) k = 'firefox';
+  else if (/CriOS/i.test(ua)) k = 'ioschrome';
+  else if (/Chrome/i.test(ua)) k = 'chrome';
+  else if (/Safari/i.test(ua)) k = 'safari';
+  const standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+  return { k, android, ios, standalone };
+}
+function micHelpHtml() {
+  const b = browserKind(); let steps;
+  if (b.android && b.k === 'samsung') steps = ['주소창 왼쪽 자물쇠(또는 ⋮ 메뉴) → <b>사이트 설정/권한</b> → <b>마이크</b>를 <b>허용</b>으로', '그래도 안 되면 휴대폰 <b>설정 → 애플리케이션 → 삼성 인터넷 → 권한 → 마이크</b> → "앱 사용 중에만 허용"'];
+  else if (b.android) steps = ['주소창 왼쪽 아이콘(자물쇠/설정 아이콘) → <b>권한</b> → <b>마이크</b>를 <b>허용</b>으로', 'Chrome 오른쪽 위 <b>⋮ → 설정 → 사이트 설정 → 마이크</b>: 맨 위 스위치가 켜져 있어야 하고, "허용되지 않음"이면 "우선 확인"으로 바꾸세요. 그 아래 이 사이트가 "차단"에 있으면 눌러서 <b>허용</b>으로', '휴대폰 <b>설정 → 앱 → Chrome → 권한 → 마이크</b> → "앱 사용 중에만 허용"', '홈 화면에 추가한 앱으로 쓰는 경우에도 위 Chrome 설정이 그대로 적용돼요'];
+  else if (b.ios) steps = ['아이폰 <b>설정 → Safari → 마이크</b> → "허용" 또는 "묻기"', 'Safari 주소창 왼쪽 <b>aA → 웹사이트 설정 → 마이크 → 허용</b>', '크롬 앱이라면 <b>설정 → Chrome → 마이크</b> 켜기', '아이폰은 받아쓰기(음성 인식)가 Safari 기준으로만 안정적이에요. 안 되면 아래 텍스트 붙여넣기를 쓰세요'];
+  else if (b.k === 'edge') steps = ['주소창 왼쪽 자물쇠 → <b>이 사이트에 대한 권한</b> → 마이크 <b>허용</b>', '그래도 안 되면 <b>Windows 설정 → 개인 정보 → 마이크</b>에서 "앱이 마이크에 액세스하도록 허용" 켜기'];
+  else if (b.k === 'firefox') steps = ['주소창 왼쪽 아이콘 → 마이크 차단 해제. (Firefox는 음성 받아쓰기를 지원하지 않아 <b>녹음 파일 저장</b>만 쓸 수 있어요)'];
+  else if (b.k === 'safari') steps = ['<b>Safari → 설정 → 웹사이트 → 마이크</b>에서 이 사이트를 "허용"으로', 'Mac <b>시스템 설정 → 개인정보 보호 및 보안 → 마이크</b>에서 Safari 켜기'];
+  else steps = ['주소창 왼쪽 자물쇠 → <b>사이트 설정</b> → 마이크 <b>허용</b>', '그래도 안 되면 <b>Windows 설정 → 개인 정보 → 마이크</b>(또는 Mac 시스템 설정 → 개인정보 보호 → 마이크)에서 브라우저가 켜져 있는지 확인'];
+  return '<div style="margin-top:8px"><b>이 브라우저에서 허용하는 방법</b><ol style="margin:6px 0 0 18px;padding:0">' + steps.map((x) => '<li style="margin-bottom:4px">' + x + '</li>').join('') + '</ol><div class="mute" style="margin-top:6px">웹앱은 브라우저가 "차단"한 마이크를 스스로 풀 수 없어요(보안 규칙). 위에서 바꾼 뒤 이 화면의 <b>상태 새로고침</b>을 누르거나 앱을 껐다 켜 주세요.</div></div>';
+}
+async function micPermState() {
+  try { if (navigator.permissions && navigator.permissions.query) { const r = await navigator.permissions.query({ name: 'microphone' }); return r; } } catch {}
+  return null;
+}
+async function micRefresh() {
+  const st = document.getElementById('mic_status'); if (!st) return;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const secure = window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+  const p = await micPermState();
+  const s = p ? p.state : 'unknown';
+  const map = { granted: ['✅ 허용됨', '바로 녹음할 수 있어요.'], prompt: ['❔ 아직 묻지 않음 / 매번 확인', '아래 "마이크 허용 요청" 버튼을 누르고 브라우저 창에서 <b>허용</b>을 눌러 주세요.'], denied: ['⛔ 차단됨', '브라우저가 마이크를 막아 둔 상태예요. 아래 방법으로 풀어 주세요.'], unknown: ['❔ 확인 불가', '이 브라우저는 상태를 알려 주지 않아요. 아래 "마이크 허용 요청"으로 직접 시험해 보세요.'] };
+  const m = map[s] || map.unknown;
+  st.innerHTML = '<div><b>마이크 권한:</b> ' + m[0] + '</div><div class="mute">' + m[1] + '</div>' +
+    '<div class="mute" style="margin-top:4px">받아쓰기(음성 인식): ' + (SR ? '지원' : '<b>이 브라우저는 지원 안 함</b> (Chrome·Edge·Safari 권장)') + ' · 보안 연결: ' + (secure ? '정상' : '<b>아님</b> (https 주소로 열어야 해요)') + '</div>' +
+    '<div class="mute">확인 중인 주소: ' + esc(location.origin) + '</div>';
+  const h = document.getElementById('mic_help');
+  if (h) h.innerHTML = (s === 'denied' || s === 'unknown' || !secure) ? micHelpHtml() : '';
+  if (p && !p._pcBound) { p._pcBound = true; p.onchange = () => micRefresh(); }
+}
+let MIC_TEST = null;
+async function micTest() {
+  const out = document.getElementById('mic_out'), bar = document.getElementById('mic_meter');
+  if (!out) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { out.textContent = '이 주소에서는 마이크를 쓸 수 없어요. https 주소인지 확인해 주세요.'; return; }
+  if (REC.on) { out.textContent = '녹음 중에는 테스트할 수 없어요.'; return; }
+  out.textContent = '브라우저에 마이크 허용 창이 뜨면 "허용"을 눌러 주세요…';
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) {
+    const n = e && e.name;
+    if (n === 'NotFoundError' || n === 'OverconstrainedError') out.textContent = '마이크 장치를 찾지 못했어요. 이어폰/마이크 연결을 확인해 주세요.';
+    else if (n === 'NotReadableError') out.textContent = '다른 앱이 마이크를 쓰고 있어요. 다른 앱(통화·녹음 등)을 닫고 다시 해 보세요.';
+    else out.textContent = '마이크가 허용되지 않았어요. 아래 방법으로 허용해 주세요.';
+    micRefresh(); const h = document.getElementById('mic_help'); if (h) h.innerHTML = micHelpHtml(); return;
+  }
+  micRefresh();
+  out.textContent = '허용됐어요! 5초 동안 말씀해 보세요. 막대가 움직이면 정상이에요.';
+  let ctx, an, raf, peak = 0; const t0 = Date.now();
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)(); const src = ctx.createMediaStreamSource(stream); an = ctx.createAnalyser(); an.fftSize = 512; src.connect(an);
+    const buf = new Uint8Array(an.fftSize);
+    await new Promise((res) => {
+      const tick = () => {
+        an.getByteTimeDomainData(buf); let mx = 0; for (let i = 0; i < buf.length; i++) mx = Math.max(mx, Math.abs(buf[i] - 128));
+        const lv = Math.min(100, Math.round(mx / 128 * 200)); peak = Math.max(peak, lv); if (bar) bar.style.width = lv + '%';
+        if (Date.now() - t0 < 5000) raf = requestAnimationFrame(tick); else res();
+      }; tick();
+    });
+  } catch {}
+  try { stream.getTracks().forEach((t) => t.stop()); } catch {} try { ctx && ctx.close(); } catch {}
+  if (bar) bar.style.width = '0%';
+  out.textContent = peak > 8 ? '✅ 소리가 잘 들어와요. 이제 녹음하셔도 돼요.' : '마이크는 허용됐지만 소리가 거의 안 들어와요. 마이크가 가려지지 않았는지, 기기 음소거인지 확인해 주세요.';
+}
+async function sttTest() {
+  const out = document.getElementById('mic_out'); if (!out) return;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { out.textContent = '이 브라우저는 실시간 받아쓰기를 지원하지 않아요. Chrome이나 Safari를 써 보세요. (녹음 파일 저장은 가능)'; return; }
+  if (REC.on) { out.textContent = '녹음 중에는 테스트할 수 없어요.'; return; }
+  out.textContent = '8초 동안 말씀해 보세요. (허용 창이 뜨면 "허용")'; let heard = '', err = '';
+  const sr = new SR(); sr.lang = 'ko-KR'; sr.continuous = false; sr.interimResults = true;
+  sr.onresult = (e) => { heard = Array.from(e.results).map((r) => r[0].transcript).join(' '); out.textContent = '들리는 말: ' + heard; };
+  sr.onerror = (e) => { err = e.error; };
+  await new Promise((res) => { sr.onend = res; try { sr.start(); } catch { res(); } setTimeout(() => { try { sr.stop(); } catch {} }, 8000); setTimeout(res, 10000); });
+  if (heard) out.textContent = '✅ 받아쓰기 성공: "' + heard + '"';
+  else if (err === 'not-allowed' || err === 'service-not-allowed') { out.textContent = '받아쓰기용 마이크가 막혀 있어요. 아래 방법으로 허용해 주세요.'; const h = document.getElementById('mic_help'); if (h) h.innerHTML = micHelpHtml(); }
+  else if (err === 'audio-capture') out.textContent = '마이크를 잡지 못했어요. 다른 앱이 쓰는 중이거나 마이크가 없어요.';
+  else if (err === 'network') out.textContent = '받아쓰기는 인터넷이 필요해요. 연결을 확인해 주세요.';
+  else out.textContent = '말소리를 알아듣지 못했어요. 조금 더 가까이서 또박또박 다시 해 보세요.';
+  micRefresh();
+}
 function startSTT() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return;
   const sr = new SR(); REC.sr = sr; sr.lang = 'ko-KR'; sr.continuous = true; sr.interimResults = true;
@@ -494,6 +590,7 @@ async function recStart() {
   try { localStorage.setItem('pc_rec_stt', useSTT ? '1' : '0'); localStorage.setItem('pc_rec_audio', useAudio ? '1' : '0'); } catch {}
   if (!useSTT && !useAudio) return sttNote('실시간 받아쓰기나 녹음 파일 저장 중 하나는 켜 주세요.');
   sttNote('');
+  { const pm = await micPermState(); if (pm && pm.state === 'denied') { sttPaused('마이크가 차단되어 있어서 녹음을 시작할 수 없어요. 설정의 "마이크 점검"에서 허용 방법을 확인해 주세요.'); return; } }
   REC.chunks = []; REC.mr = null; REC.stream = null; REC.sttStopped = false; REC.fast = 0; REC.slow = 0;
   if (useAudio) {
     try { REC.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
@@ -791,7 +888,15 @@ async function settings() {
   <label>주로 만나는 아이</label><input id="s_clients" value="${esc(getProf().clients)}" placeholder="예: 지적장애·발달지연 학령기 아동">
   <label>AI 도움 방식</label><select id="s_style"><option value="coach" ${getProf().style !== 'expert' ? 'selected' : ''}>상담 스킬 코칭 (잘한 점·개선점을 자세히)</option><option value="expert" ${getProf().style === 'expert' ? 'selected' : ''}>경력자용 (간결하게, 놓친 신호·표현 다듬기 중심)</option></select>
   <label>추가 지침 (선택)</label><textarea id="s_extra" style="min-height:70px" placeholder="예: 진단명은 쓰지 말고 쉬운 말로 설명해 주세요">${esc(getProf().extra)}</textarea>
-  <div class="row" style="margin-top:12px"><button class="b" data-act="saveSettings">저장</button><button class="b sec" data-act="tab" data-v="home">닫기</button></div></div>`;
+  <div class="row" style="margin-top:12px"><button class="b" data-act="saveSettings">저장</button><button class="b sec" data-act="tab" data-v="home">닫기</button></div></div>
+  <div class="card" id="mic_card"><h3>마이크 점검</h3>
+  <div class="mute">녹음·받아쓰기가 안 될 때 여기서 상태를 확인하고 허용 요청을 보낼 수 있어요.</div>
+  <div id="mic_status" style="margin-top:8px">확인 중…</div>
+  <div class="row" style="margin-top:10px;flex-wrap:wrap"><button class="b" data-act="micAllow">마이크 허용 요청 / 소리 테스트</button><button class="b sec" data-act="sttTest">받아쓰기 테스트</button><button class="b sec" data-act="micRefresh">상태 새로고침</button></div>
+  <div style="height:10px;background:#e4e8e6;border-radius:6px;margin-top:10px;overflow:hidden"><div id="mic_meter" style="height:100%;width:0;background:var(--brand,#2f6f6a)"></div></div>
+  <div id="mic_out" class="mute" style="margin-top:6px"></div>
+  <div id="mic_help"></div></div>`;
+  micRefresh();
 }
 
 /* ============ 이벤트 ============ */
@@ -801,6 +906,10 @@ document.addEventListener('click', async (e) => {
   const act = el.dataset.act, id = el.dataset.id;
   if (act === 'tab') return go(el.dataset.v, { tab: el.dataset.v, childId: null });
   if (act === 'settings') return go('settings');
+  if (act === 'micCheck') { if (REC.on && !confirm('녹음을 멈추고 설정으로 이동할까요?')) return; if (REC.on) { try { await recStopUI(); } catch {} } return go('settings'); }
+  if (act === 'micAllow') return micTest();
+  if (act === 'sttTest') return sttTest();
+  if (act === 'micRefresh') return micRefresh();
   if (act === 'saveSettings') { cfg.key = document.getElementById('s_key').value.trim(); cfg.model = document.getElementById('s_model').value.trim() || 'claude-sonnet-4-5'; cfg.anon = document.getElementById('s_anon').checked; cfg.mode = document.getElementById('s_mode').value; cfg.maskWords = document.getElementById('s_mask').value.trim(); setProf({ job: f('s_job') || '치료사', years: f('s_years'), clients: f('s_clients'), style: document.getElementById('s_style').value, extra: f('s_extra') }); return go('home', { tab: 'home' }); }
   if (act === 'testMask') { const r = await redactText(document.getElementById('s_test').value); document.getElementById('s_out').textContent = r.text; document.getElementById('s_sum').textContent = foundSummary(r.found); return; }
   if (act === 'addGoalRow') { document.getElementById('goalRows').insertAdjacentHTML('beforeend', goalRowHtml({ id: uid(), title: '', mode: 'level' })); return; }
