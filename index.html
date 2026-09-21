@@ -66,7 +66,7 @@ a.b{display:inline-block;text-decoration:none}
 </style>
 </head>
 <body>
-<header><h1 id="title">부모 상담 도우미</h1><button data-act="settings">설정</button></header>
+<header><button id="backBtn" data-act="back" style="display:none">← 뒤로</button><h1 id="title">부모 상담 도우미</h1><button data-act="settings">설정</button></header>
 <nav id="nav"></nav>
 <main id="app"></main>
 
@@ -253,7 +253,25 @@ const ATYPES = ['공감형', '근거·관찰 제시형', '구체적 가이드형
 /* ============ 상태/렌더 ============ */
 let S = { view: 'home', childId: null, sessionId: null, tab: 'home', busy: false, msg: '', rec: null };
 const $app = document.getElementById('app');
-const go = (v, extra = {}) => { S = { ...S, view: v, msg: '', ...extra }; render(); window.scrollTo(0, 0); };
+let navDepth = 0, popping = false;
+const snap = () => ({ view: S.view, childId: S.childId, sessionId: S.sessionId, tab: S.tab });
+function updateBack() { const b = document.getElementById('backBtn'); if (b) b.style.display = navDepth > 0 ? '' : 'none'; }
+try { history.replaceState({ pc: 1, d: 0, S: snap() }, ''); } catch {}
+const go = (v, extra = {}) => {
+  const doGo = () => {
+    const before = JSON.stringify(snap());
+    S = { ...S, view: v, msg: '', ...extra };
+    if (JSON.stringify(snap()) !== before) { navDepth++; try { history.pushState({ pc: 1, d: navDepth, S: snap() }, ''); } catch {} }
+    render(); window.scrollTo(0, 0); updateBack();
+  };
+  if (REC.on && v !== 'record') return recStopUI().catch(() => {}).then(doGo);   // 녹음 중 다른 화면으로 가면 자동 저장
+  doGo();
+};
+window.addEventListener('popstate', async (e) => {
+  const st = e.state; if (!st || !st.pc) return;
+  if (REC.on) { try { await recStopUI(); } catch {} }
+  navDepth = st.d; S = { ...S, ...st.S, msg: '' }; render(); window.scrollTo(0, 0); updateBack();
+});
 
 function setNav() {
   const tabs = [['home', '아이 목록'], ['stats', '데이터 분석'], ['coach', '즉석 코치'], ['backup', '백업']];
@@ -609,10 +627,12 @@ async function recStart() {
   const ta = document.getElementById('r_text');
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const useSTT = !!SR && document.getElementById('o_stt').checked;
-  const useAudio = document.getElementById('o_audio').checked;
+  let useAudio = document.getElementById('o_audio').checked;
   try { localStorage.setItem('pc_rec_stt', useSTT ? '1' : '0'); localStorage.setItem('pc_rec_audio', useAudio ? '1' : '0'); } catch {}
+  let mobNote = '';
+  if (IS_MOBILE && useSTT && useAudio) { useAudio = false; const oa = document.getElementById('o_audio'); if (oa) oa.checked = false; mobNote = '폰에서는 받아쓰기와 녹음 파일 저장을 함께 쓰면 글이 안 써져서, 받아쓰기만 켰어요.'; }
   if (!useSTT && !useAudio) return sttNote('실시간 받아쓰기나 녹음 파일 저장 중 하나는 켜 주세요.');
-  sttNote('');
+  sttNote(mobNote);
   { const pm = await micPermState(); if (pm && pm.state === 'denied') { sttPaused('마이크가 차단되어 있어서 녹음을 시작할 수 없어요. 설정의 "마이크 점검"에서 허용 방법을 확인해 주세요.'); return; } }
   REC.chunks = []; REC.mr = null; REC.stream = null; REC.sttStopped = false; REC.fast = 0; REC.slow = 0;
   if (useAudio) {
@@ -928,6 +948,7 @@ document.addEventListener('click', async (e) => {
   await sessQ;
   const act = el.dataset.act, id = el.dataset.id;
   if (act === 'tab') return go(el.dataset.v, { tab: el.dataset.v, childId: null });
+  if (act === 'back') { if (navDepth > 0) history.back(); else go('home', { tab: 'home', childId: null }); return; }
   if (act === 'settings') return go('settings');
   if (act === 'micCheck') { if (REC.on && !confirm('녹음을 멈추고 설정으로 이동할까요?')) return; if (REC.on) { try { await recStopUI(); } catch {} } return go('settings'); }
   if (act === 'micAllow') return micTest();
