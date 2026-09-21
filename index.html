@@ -602,19 +602,25 @@ function startSTT() {
       if (REC.slow >= 2 && REC.on) { REC.sttStopped = true; try { sr.stop(); } catch {} sttPaused('받아쓰기를 시작할 때마다 마이크 허용 창이 뜨는 것 같아서 자동 이어받기를 멈췄어요. 브라우저 설정 > 사이트 권한에서 이 주소의 마이크를 "허용"으로 고정한 뒤 이어서 시작해 주세요.'); }
     }
   };
+  REC.sessText = '';
   sr.onresult = (e) => {
-    let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) REC.finalText += t.trim() + '\n'; else interim += t;
+    // 안드로이드 크롬은 같은 문장을 누적해서 여러 번 돌려주므로, 매번 처음부터 다시 조립하고 겹치는 문장은 하나로 합친다
+    const lines = [];
+    for (let i = 0; i < e.results.length; i++) {
+      const t = (e.results[i][0].transcript || '').trim(); if (!t) continue;
+      const last = lines[lines.length - 1];
+      if (last !== undefined && (t === last || last.startsWith(t))) continue;
+      if (last !== undefined && t.startsWith(last)) lines[lines.length - 1] = t; else lines.push(t);
     }
-    const el = document.getElementById('r_text'); if (el) el.value = REC.finalText + interim;
+    REC.sessText = lines.join('\n');
+    const el = document.getElementById('r_text'); if (el) el.value = REC.finalText + REC.sessText;
   };
   sr.onerror = (e) => {
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { REC.sttStopped = true; sttPaused('받아쓰기용 마이크 권한이 막혀 있어요. 브라우저 설정 > 사이트 권한에서 이 주소의 마이크를 "허용"으로 바꾼 뒤 이어서 시작해 주세요.'); }
     else if (e.error === 'audio-capture') { REC.sttStopped = true; sttPaused('마이크를 다른 기능이 쓰고 있어요. "녹음 파일 저장"을 끄고 다시 해 보세요.'); }
   };
   sr.onend = () => {
+    if (REC.sessText) { REC.finalText += REC.sessText + '\n'; REC.sessText = ''; }
     if (!REC.on || REC.sttStopped) return;
     REC.fast = Date.now() - REC.lastStart < 1200 ? REC.fast + 1 : 0;
     if (REC.fast >= 3) { REC.sttStopped = true; sttPaused('받아쓰기가 계속 끊겨서 잠시 멈췄어요.'); return; }
