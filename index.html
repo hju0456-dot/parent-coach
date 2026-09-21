@@ -603,14 +603,22 @@ function startSTT() {
     }
   };
   REC.sessText = '';
+  const nz = (x) => x.replace(/[\s.,!?]/g, '');
   sr.onresult = (e) => {
-    // 안드로이드 크롬은 같은 문장을 누적해서 여러 번 돌려주므로, 매번 처음부터 다시 조립하고 겹치는 문장은 하나로 합친다
+    // 안드로이드 크롬은 같은 문장을 누적·중복해서 돌려주므로(띄어쓰기만 다른 경우 포함) 매번 처음부터 조립하고 겹치는 문장은 하나로 합친다
     const lines = [];
     for (let i = 0; i < e.results.length; i++) {
       const t = (e.results[i][0].transcript || '').trim(); if (!t) continue;
-      const last = lines[lines.length - 1];
-      if (last !== undefined && (t === last || last.startsWith(t))) continue;
-      if (last !== undefined && t.startsWith(last)) lines[lines.length - 1] = t; else lines.push(t);
+      const n = nz(t), last = lines[lines.length - 1], ln = last === undefined ? '' : nz(last);
+      if (last !== undefined && (n === ln || ln.startsWith(n))) continue;
+      if (last !== undefined && n.startsWith(ln)) lines[lines.length - 1] = t; else lines.push(t);
+    }
+    // 새로 시작한 인식이 직전에 확정된 문장을 다시 내보내는 경우도 합친다
+    if (lines.length && REC.finalText) {
+      const arr = REC.finalText.split('\n'); while (arr.length && !arr[arr.length - 1].trim()) arr.pop();
+      const prev = arr.length ? arr[arr.length - 1] : '', pn = nz(prev), n0 = nz(lines[0]);
+      if (pn && n0 === pn) lines.shift();
+      else if (pn && n0.startsWith(pn)) { arr.pop(); REC.finalText = arr.length ? arr.join('\n') + '\n' : ''; }
     }
     REC.sessText = lines.join('\n');
     const el = document.getElementById('r_text'); if (el) el.value = REC.finalText + REC.sessText;
