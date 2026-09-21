@@ -448,6 +448,29 @@ async function record() {
 }
 
 const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+/* ---------- 카카오톡·네이버 등 인앱 브라우저 → 외부 브라우저로 열기 ---------- */
+(function () {
+  const ua = navigator.userAgent;
+  if (!/KAKAOTALK|NAVER\(inapp|Line\/|Instagram|FBAN|FBAV/i.test(ua)) return;
+  const url = location.href;
+  const isAndroid = /Android/i.test(ua), isKakao = /KAKAOTALK/i.test(ua);
+  const chromeUrl = 'intent://' + url.replace(/^https?:\/\//, '') + '#Intent;scheme=https;package=com.android.chrome;end';
+  const openExt = () => {
+    if (isAndroid) location.href = chromeUrl;
+    else if (isKakao) location.href = 'kakaotalk://web/openExternal?url=' + encodeURIComponent(url);
+  };
+  let tried = false; try { tried = sessionStorage.getItem('pc_ext') === '1'; sessionStorage.setItem('pc_ext', '1'); } catch {}
+  if (!tried) setTimeout(openExt, 100);
+  window.__pcOpenExt = openExt;
+  document.addEventListener('DOMContentLoaded', () => {
+    const d = document.createElement('div');
+    d.style.cssText = 'background:#fff3cd;color:#664d03;padding:10px 14px;font-size:14px;line-height:1.5;text-align:center';
+    d.innerHTML = '지금은 앱 안의 임시 브라우저라서 <b>마이크가 잘 안 될 수 있어요.</b> <button id="pcExtBtn" style="margin-left:6px;padding:6px 12px;border:0;border-radius:8px;background:#2f6f6a;color:#fff;font-size:14px">크롬에서 열기</button><div style="font-size:12px;margin-top:4px">안 열리면 오른쪽 위 ⋮ 또는 공유 버튼 → "다른 브라우저로 열기"를 눌러 주세요.</div>';
+    document.body.insertBefore(d, document.body.firstChild);
+    document.getElementById('pcExtBtn').onclick = openExt;
+  });
+})();
 function recOpt(k) { try { const v = localStorage.getItem('pc_rec_' + k); if (v !== null) return v === '1'; } catch {} return k === 'stt' ? true : !IS_MOBILE; }
 const REC = { stream: null, mr: null, chunks: [], sr: null, on: false, t0: 0, timer: null, finalText: '', sttStopped: false, fast: 0, slow: 0, lastStart: 0 };
 function sttPaused(text) {
